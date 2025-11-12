@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubdev
+  labels:
+    name: kubdev
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubdev-backend
+  namespace: kubdev
+  labels:
+    app: kubdev-backend
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubdev-backend-role
+rules:
+# 네임스페이스 관리
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "create", "delete"]
+
+# Pod 관리 (로그 조회, 상태 확인)
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch"]
+
+# Service 관리
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "create", "update", "delete"]
+
+# ConfigMap, Secret 관리 (환경 설정용)
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "delete"]
+
+# PersistentVolumeClaim 관리 (스토리지)
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "create", "delete"]
+
+# Deployment 관리 (개발환경 생성/삭제)
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/status"]
+  verbs: ["get", "list", "create", "update", "delete", "patch"]
+
+# ReplicaSet 조회 (Deployment 상태 확인용)
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["get", "list"]
+
+# Ingress 관리 (외부 접속용)
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "create", "update", "delete"]
+
+# NetworkPolicy 관리 (네트워크 보안)
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "create", "update", "delete"]
+
+# 메트릭 조회 (리소스 모니터링)
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+# 이벤트 조회 (문제 진단용)
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubdev-backend-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubdev-backend-role
+subjects:
+- kind: ServiceAccount
+  name: kubdev-backend
+  namespace: kubdev
+---
+# 개발환경 전용 Role (개별 네임스페이스에서 더 제한적인 권한)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubdev-environment-role
+  namespace: kubdev
+rules:
+# 개발환경 Pod에서 필요한 최소 권한
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+
+# ConfigMap 읽기 (환경 설정 조회)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+
+# Secret 읽기 (필요한 경우에만)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+  resourceNames: ["git-credentials", "docker-registry"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubdev-environment-binding
+  namespace: kubdev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubdev-environment-role
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: kubdev

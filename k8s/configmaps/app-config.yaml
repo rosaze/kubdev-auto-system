@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubdev-config
+  namespace: kubdev
+  labels:
+    app: kubdev
+data:
+  # 애플리케이션 설정
+  APP_NAME: "KubeDev Auto System"
+  DEBUG: "false"
+  LOG_LEVEL: "INFO"
+
+  # K8s 설정
+  K8S_NAMESPACE: "kubdev"
+  K8S_IMAGE_PULL_POLICY: "IfNotPresent"
+
+  # 리소스 기본값
+  DEFAULT_CPU_LIMIT: "1000m"
+  DEFAULT_MEMORY_LIMIT: "2Gi"
+  DEFAULT_STORAGE_LIMIT: "10Gi"
+
+  # 환경 타임아웃
+  ENVIRONMENT_TIMEOUT_HOURS: "8"
+
+  # 모니터링 설정
+  PROMETHEUS_ENABLED: "true"
+  METRICS_PORT: "9090"
+
+  # 베이스 IDE 이미지 (JSON 형태로 저장)
+  BASE_IDE_IMAGES: |
+    {
+      "vscode-python": "codercom/code-server:latest",
+      "vscode-node": "codercom/code-server:latest",
+      "vscode-react": "codercom/code-server:latest",
+      "jupyter": "jupyter/scipy-notebook:latest"
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubdev-secrets
+  namespace: kubdev
+  labels:
+    app: kubdev
+type: Opaque
+stringData:
+  # 데이터베이스 설정
+  postgres-user: "kubdev"
+  postgres-password: "your-secure-postgres-password-here"
+  database-url: "postgresql://kubdev:your-secure-postgres-password-here@postgresql-service:5432/kubdev"
+
+  # Redis 설정
+  redis-password: "your-secure-redis-password-here"
+  redis-url: "redis://:your-secure-redis-password-here@redis-service:6379/0"
+
+  # JWT 설정
+  jwt-secret-key: "your-super-secret-jwt-key-change-this-in-production"
+
+  # Docker Registry (필요한 경우)
+  docker-registry-url: "docker.io"
+  docker-registry-username: ""
+  docker-registry-password: ""
