@@ -391,3 +391,219 @@ async def get_live_metrics(namespace: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get live metrics: {str(e)}")
+
+
+# =====================================
+# 🚀 일괄 사용자 생성 API (부트캠프용)
+# =====================================
+
+@router.post("/users/batch")
+async def create_batch_users(
+    request_data: dict,  # prefix, count, template_id, resource_quota, organization_id
+    db: Session = Depends(get_session)
+):
+    """부트캠프용 대량 사용자 계정 생성"""
+
+    try:
+        from app.services.batch_user_service import BatchUserService
+        from app.models.project_template import ProjectTemplate
+        import asyncio
+
+        # 요청 데이터 검증
+        prefix = request_data.get("prefix")
+        count = request_data.get("count")
+        template_id = request_data.get("template_id")
+        organization_id = request_data.get("organization_id", 1)
+        resource_quota = request_data.get("resource_quota", {
+            "cpu": "1",
+            "memory": "2Gi",
+            "storage": "10Gi"
+        })
+
+        if not prefix or not count or not template_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: prefix, count, template_id"
+            )
+
+        if not (1 <= count <= 200):
+            raise HTTPException(
+                status_code=400,
+                detail="Count must be between 1 and 200"
+            )
+
+        # 템플릿 존재 확인
+        template = db.query(ProjectTemplate).filter(
+            ProjectTemplate.id == template_id
+        ).first()
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # 일괄 생성 서비스 초기화
+        batch_service = BatchUserService(db)
+
+        # 비동기 일괄 생성 실행
+        result = await batch_service.create_batch_users(
+            prefix=prefix,
+            count=count,
+            template_id=template_id,
+            organization_id=organization_id,
+            resource_quota=resource_quota
+        )
+
+        return {
+            "status": "completed",
+            "created_count": result["created_count"],
+            "failed_count": result["failed_count"],
+            "total_requested": count,
+            "users": result["users"],
+            "failures": result["failures"],
+            "template_name": template.name,
+            "resource_quota": resource_quota,
+            "execution_time": result["execution_time"],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch user creation failed: {str(e)}")
+
+
+@router.post("/users/single")
+async def create_single_user_with_environment(
+    request_data: dict,  # username, template_id, resource_quota, password (optional)
+    db: Session = Depends(get_session)
+):
+    """단일 사용자 계정 + 환경 즉시 생성"""
+
+    try:
+        from app.services.batch_user_service import BatchUserService
+        from app.models.project_template import ProjectTemplate
+
+        # 요청 데이터 검증
+        username = request_data.get("username")
+        template_id = request_data.get("template_id")
+        password = request_data.get("password")  # 지정하지 않으면 자동생성
+        organization_id = request_data.get("organization_id", 1)
+        resource_quota = request_data.get("resource_quota", {
+            "cpu": "1",
+            "memory": "2Gi",
+            "storage": "10Gi"
+        })
+
+        if not username or not template_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: username, template_id"
+            )
+
+        # 템플릿 존재 확인
+        template = db.query(ProjectTemplate).filter(
+            ProjectTemplate.id == template_id
+        ).first()
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        # 사용자명 중복 확인
+        existing_user = db.query(User).filter(
+            User.email == f"{username}@kubdev.local"
+        ).first()
+
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User with username '{username}' already exists"
+            )
+
+        # 단일 사용자 생성 서비스
+        batch_service = BatchUserService(db)
+
+        result = await batch_service.create_single_user_with_environment(
+            username=username,
+            template_id=template_id,
+            organization_id=organization_id,
+            resource_quota=resource_quota,
+            custom_password=password
+        )
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create user: {result['error']}"
+            )
+
+        return {
+            "status": "success",
+            "user": result["user"],
+            "environment": result["environment"],
+            "access_info": result["access_info"],
+            "template_name": template.name,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"User creation failed: {str(e)}")
+
+
+@router.get("/batch-jobs/{job_id}")
+async def get_batch_job_status(job_id: str):
+    """일괄 생성 작업 상태 조회 (향후 구현용)"""
+
+    # 향후 백그라운드 작업 상태 추적용
+    # Redis나 Celery와 연동하여 구현
+
+    return {
+        "job_id": job_id,
+        "status": "not_implemented",
+        "message": "Batch job tracking will be implemented with Celery/Redis"
+    }
+
+
+@router.delete("/users/batch")
+async def delete_batch_users(
+    prefix: str = Query(..., description="Username prefix to delete"),
+    dry_run: bool = Query(True, description="Preview only"),
+    db: Session = Depends(get_session)
+):
+    """특정 prefix의 사용자들 일괄 삭제"""
+
+    try:
+        from app.services.batch_user_service import BatchUserService
+
+        # prefix로 사용자 검색
+        users_to_delete = db.query(User).filter(
+            User.email.like(f"{prefix}%@kubdev.local")
+        ).all()
+
+        if not users_to_delete:
+            return {
+                "status": "no_users_found",
+                "prefix": prefix,
+                "count": 0
+            }
+
+        batch_service = BatchUserService(db)
+
+        result = await batch_service.delete_batch_users(
+            user_ids=[user.id for user in users_to_delete],
+            dry_run=dry_run
+        )
+
+        return {
+            "status": "completed" if not dry_run else "preview",
+            "prefix": prefix,
+            "users_found": len(users_to_delete),
+            "deleted_count": result["deleted_count"],
+            "failed_count": result["failed_count"],
+            "details": result["details"],
+            "dry_run": dry_run,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch deletion failed: {str(e)}")
