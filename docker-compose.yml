@@ -5,8 +5,12 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     environment:
-      - KUBEDEV_MOCK=1
+      - KUBEDEV_MOCK=0
     ports:
       - "8000:8000"
+    volumes:
+      - ${HOME}/.kube:/root/.kube:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
