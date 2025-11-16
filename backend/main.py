@@ -63,10 +63,10 @@ async def health_check():
         try:
             from app.services.kubernetes_service import KubernetesService
             k8s_service = KubernetesService()
-            cluster_info = await k8s_service.get_cluster_info()
+            cluster_info = await k8s_service.get_cluster_overview()
             if cluster_info:
                 health_status["kubernetes"] = "connected"
-                health_status["services"]["kubernetes"] = f"✅ Connected ({cluster_info.get('nodes', 0)} nodes)"
+                health_status["services"]["kubernetes"] = f"✅ Connected ({cluster_info.get('cluster_info', {}).get('total_nodes', 0)} nodes)"
             else:
                 health_status["kubernetes"] = "disconnected"
                 health_status["services"]["kubernetes"] = "❌ Disconnected"

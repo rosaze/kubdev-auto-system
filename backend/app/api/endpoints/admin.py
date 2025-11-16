@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.models.environment import EnvironmentInstance
 from app.models.user import User
 from app.models.project_template import ProjectTemplate
@@ -41,7 +41,7 @@ async def get_all_environments_admin(
     status: Optional[str] = Query(None, description="Filter by status"),
     user_id: Optional[int] = Query(None, description="Filter by user"),
     namespace: Optional[str] = Query(None, description="Filter by namespace"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """모든 환경의 상태 조회 (Admin용) - K8s 실시간 데이터"""
     try:
@@ -128,7 +128,7 @@ async def get_namespace_details_admin(namespace: str):
 @router.get("/resource-usage")
 async def get_resource_usage_summary(
     timeframe: str = Query("1h", description="Timeframe: 1h, 6h, 24h"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """전체 리소스 사용량 요약"""
     try:
@@ -178,7 +178,7 @@ async def get_resource_usage_summary(
 @router.get("/users-activity")
 async def get_users_activity(
     limit: int = Query(50, ge=1, le=100, description="Number of users to return"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """사용자 활동 현황"""
     try:
@@ -262,7 +262,7 @@ async def get_templates_usage(db: Session = Depends(get_session)):
 @router.post("/cleanup/expired")
 async def cleanup_expired_environments(
     dry_run: bool = Query(False, description="Preview only, don't actually delete"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """만료된 환경 정리"""
     try:
@@ -400,7 +400,7 @@ async def get_live_metrics(namespace: str):
 @router.post("/users/batch")
 async def create_batch_users(
     request_data: dict,  # prefix, count, template_id, resource_quota, organization_id
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """부트캠프용 대량 사용자 계정 생성"""
 
@@ -474,7 +474,7 @@ async def create_batch_users(
 @router.post("/users/single")
 async def create_single_user_with_environment(
     request_data: dict,  # username, template_id, resource_quota, password (optional)
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """단일 사용자 계정 + 환경 즉시 생성"""
 
@@ -568,7 +568,7 @@ async def get_batch_job_status(job_id: str):
 async def delete_batch_users(
     prefix: str = Query(..., description="Username prefix to delete"),
     dry_run: bool = Query(True, description="Preview only"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """특정 prefix의 사용자들 일괄 삭제"""
 

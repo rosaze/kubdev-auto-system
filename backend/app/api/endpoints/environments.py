@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.models.environment import EnvironmentInstance, EnvironmentStatus
 from app.models.project_template import ProjectTemplate
 from app.models.user import User
@@ -30,7 +30,7 @@ router = APIRouter()
 async def create_environment(
     environment_data: EnvironmentCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """새로운 개발 환경 생성"""
 
@@ -85,7 +85,7 @@ async def list_environments(
     status: Optional[EnvironmentStatus] = Query(None, description="Filter by status"),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 목록 조회"""
 
@@ -115,7 +115,7 @@ async def list_environments(
 @router.get("/{environment_id}", response_model=EnvironmentResponse)
 async def get_environment(
     environment_id: int,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """특정 환경 조회"""
 
@@ -133,7 +133,7 @@ async def get_environment(
 async def update_environment(
     environment_id: int,
     update_data: EnvironmentUpdate,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 정보 업데이트"""
 
@@ -159,7 +159,7 @@ async def update_environment(
 async def environment_action(
     environment_id: int,
     action_request: EnvironmentActionRequest,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 액션 실행 (start, stop, restart, delete)"""
 
@@ -194,7 +194,7 @@ async def environment_action(
 async def get_environment_logs(
     environment_id: int,
     tail_lines: int = Query(100, ge=1, le=1000, description="Number of log lines to retrieve"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 로그 조회"""
 
@@ -222,7 +222,7 @@ async def get_environment_logs(
 @router.get("/{environment_id}/access-info")
 async def get_access_info(
     environment_id: int,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 접속 정보 조회"""
 

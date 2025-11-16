@@ -1,6 +1,10 @@
 """
 Authentication API Endpoints
 인증 및 사용자 관리 API
+
+- 폴백 구조 추가해야할거같음 
+- 로그인을 간단히 하고 넘어갈 수 있도록 
+- 토큰 발급수정 
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -280,7 +284,7 @@ async def update_user_admin(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        db.rollback() # db롤백? 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update user: {str(e)}"

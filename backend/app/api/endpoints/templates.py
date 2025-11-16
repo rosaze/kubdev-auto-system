@@ -10,7 +10,7 @@ import uuid
 import time
 from datetime import datetime
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.models.project_template import ProjectTemplate, TemplateStatus
 from app.models.user import User
 from app.schemas.project_template import (
@@ -22,6 +22,7 @@ from app.schemas.project_template import (
     TemplateDeploymentTest
 )
 from app.services.kubernetes_service import KubernetesService
+from app.services.dockerfile_generator import DockerfileGenerator
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ router = APIRouter()
 async def create_template(
     template_data: ProjectTemplateCreate,
     created_by: int = Query(..., description="Creator user ID"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """새 프로젝트 템플릿 생성"""
 
@@ -92,7 +93,7 @@ async def list_templates(
     is_public: Optional[bool] = Query(None, description="Filter by public/private"),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 목록 조회"""
 
@@ -124,7 +125,7 @@ async def list_templates(
 @router.get("/{template_id}", response_model=ProjectTemplateResponse)
 async def get_template(
     template_id: int,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """특정 템플릿 조회"""
 
@@ -142,7 +143,7 @@ async def get_template(
 async def update_template(
     template_id: int,
     update_data: ProjectTemplateUpdate,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 업데이트"""
 
@@ -184,7 +185,7 @@ async def update_template(
 async def delete_template(
     template_id: int,
     force: bool = Query(False, description="Force delete even if in use"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 삭제"""
 
@@ -223,7 +224,7 @@ async def delete_template(
 @router.post("/{template_id}/validate", response_model=TemplateValidationResult)
 async def validate_template_config(
     template_id: int,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 설정 유효성 검증"""
 
@@ -284,7 +285,7 @@ async def validate_template_config(
 async def test_template_deployment(
     template_id: int,
     timeout_seconds: int = Query(300, description="Test timeout in seconds"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 배포 테스트"""
 
@@ -375,7 +376,7 @@ async def clone_template(
     template_id: int,
     new_name: str = Query(..., description="Name for the cloned template"),
     created_by: int = Query(..., description="Creator user ID"),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 복제"""
 
@@ -443,7 +444,7 @@ async def clone_template(
 @router.get("/{template_id}/usage-stats")
 async def get_template_usage_stats(
     template_id: int,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """템플릿 사용 통계"""
 
@@ -497,3 +498,201 @@ async def get_template_usage_stats(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get usage stats: {str(e)}")
+
+
+# =====================================
+# 🚀 Dockerfile 자동 생성 API
+# =====================================
+
+@router.post("/generate-dockerfile")
+async def generate_dockerfile_from_stack(
+    stack_config: dict,
+    environment_id: str = Query(..., description="Environment ID for image naming"),
+    validate_only: bool = Query(False, description="Only validate without building")
+):
+    """스택 설정으로 Dockerfile 자동 생성"""
+
+    dockerfile_generator = DockerfileGenerator()
+
+    try:
+        # 1. 스택 설정 유효성 검증
+        is_valid, errors = dockerfile_generator.validate_stack_config(stack_config)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Invalid stack configuration", "errors": errors}
+            )
+
+        # 2. Dockerfile 생성
+        dockerfile_content = dockerfile_generator.generate_dockerfile(stack_config, environment_id)
+
+        if validate_only:
+            return {
+                "status": "validated",
+                "dockerfile": dockerfile_content,
+                "stack_config": stack_config,
+                "environment_id": environment_id
+            }
+
+        # 3. Docker 이미지 빌드 및 푸시
+        image_tag, build_success = await dockerfile_generator.build_and_push_image(
+            environment_id=environment_id,
+            dockerfile_content=dockerfile_content,
+            stack_config=stack_config
+        )
+
+        if not build_success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to build Docker image"
+            )
+
+        return {
+            "status": "success",
+            "dockerfile": dockerfile_content,
+            "image_tag": image_tag,
+            "environment_id": environment_id,
+            "stack_config": stack_config,
+            "build_time": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Dockerfile generation failed: {str(e)}")
+
+
+@router.get("/supported-stacks")
+async def get_supported_stacks():
+    """지원되는 스택 목록 조회"""
+
+    dockerfile_generator = DockerfileGenerator()
+
+    try:
+        supported_stacks = dockerfile_generator.get_supported_stacks()
+
+        return {
+            "supported_stacks": supported_stacks,
+            "examples": {
+                "node_react": {
+                    "language": "node",
+                    "version": "18",
+                    "framework": "react",
+                    "dependencies": ["axios", "react-router-dom"],
+                    "exposed_ports": [3000],
+                    "environment_variables": {
+                        "NODE_ENV": "development"
+                    }
+                },
+                "python_fastapi": {
+                    "language": "python",
+                    "version": "3.11",
+                    "framework": "fastapi",
+                    "dependencies": ["sqlalchemy", "pandas"],
+                    "exposed_ports": [8000],
+                    "environment_variables": {
+                        "PYTHONPATH": "/workspace"
+                    }
+                },
+                "java_spring": {
+                    "language": "java",
+                    "version": "17",
+                    "framework": "spring",
+                    "dependencies": [],
+                    "exposed_ports": [8080],
+                    "environment_variables": {
+                        "SPRING_PROFILES_ACTIVE": "development"
+                    }
+                }
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get supported stacks: {str(e)}")
+
+
+@router.post("/{template_id}/generate-custom-image")
+async def generate_custom_image_for_template(
+    template_id: int,
+    build_now: bool = Query(True, description="Build image immediately"),
+    db: Session = Depends(get_db)
+):
+    """기존 템플릿에서 커스텀 이미지 생성"""
+
+    # 템플릿 조회
+    template = db.query(ProjectTemplate).filter(
+        ProjectTemplate.id == template_id
+    ).first()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if not template.stack_config:
+        raise HTTPException(
+            status_code=400,
+            detail="Template must have stack_config to generate custom image"
+        )
+
+    dockerfile_generator = DockerfileGenerator()
+
+    try:
+        # 1. 스택 설정 유효성 검증
+        is_valid, errors = dockerfile_generator.validate_stack_config(template.stack_config)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Invalid template stack configuration", "errors": errors}
+            )
+
+        # 2. Environment ID 생성 (템플릿 기반)
+        environment_id = f"template-{template_id}-{str(uuid.uuid4())[:8]}"
+
+        # 3. Dockerfile 생성
+        dockerfile_content = dockerfile_generator.generate_dockerfile(
+            template.stack_config,
+            environment_id
+        )
+
+        if not build_now:
+            return {
+                "status": "generated",
+                "template_id": template_id,
+                "template_name": template.name,
+                "dockerfile": dockerfile_content,
+                "environment_id": environment_id,
+                "message": "Dockerfile generated. Use build_now=true to build image."
+            }
+
+        # 4. 이미지 빌드 및 푸시
+        image_tag, build_success = await dockerfile_generator.build_and_push_image(
+            environment_id=environment_id,
+            dockerfile_content=dockerfile_content,
+            stack_config=template.stack_config
+        )
+
+        if not build_success:
+            raise HTTPException(status_code=500, detail="Failed to build custom image")
+
+        # 5. 템플릿의 base_image 업데이트 (선택사항)
+        # template.base_image = image_tag
+        # db.commit()
+
+        return {
+            "status": "success",
+            "template_id": template_id,
+            "template_name": template.name,
+            "dockerfile": dockerfile_content,
+            "image_tag": image_tag,
+            "environment_id": environment_id,
+            "build_time": datetime.utcnow().isoformat(),
+            "message": f"Custom image built successfully: {image_tag}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Custom image generation failed: {str(e)}"
+        )

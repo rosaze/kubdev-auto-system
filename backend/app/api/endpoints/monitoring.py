@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.environment import EnvironmentInstance
@@ -23,7 +23,7 @@ async def get_environment_metrics(
     environment_id: int,
     hours: int = Query(1, ge=1, le=168, description="Time range in hours (max 7 days)"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """특정 환경의 리소스 메트릭 조회"""
 
@@ -93,7 +93,7 @@ async def get_environment_metrics(
 async def get_user_environments_status(
     user_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """특정 사용자의 모든 환경 상태 조회"""
 
@@ -277,7 +277,7 @@ async def get_environment_logs(
     lines: int = Query(100, ge=1, le=1000, description="Number of log lines"),
     follow: bool = Query(False, description="Follow log stream"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """환경 로그 조회"""
 
@@ -317,7 +317,7 @@ async def get_environment_logs(
 @router.get("/alerts")
 async def get_user_alerts(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """사용자별 알림 조회"""
 
