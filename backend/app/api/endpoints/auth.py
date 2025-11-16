@@ -8,7 +8,7 @@ from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from datetime import datetime
 
-from app.core.database import get_session
+from app.core.database import get_db
 from app.core.security import (
     authenticate_user,
     create_user_token,
@@ -32,7 +32,7 @@ router = APIRouter()
 @router.post("/login", response_model=UserTokenResponse)
 async def login(
     login_data: UserLogin,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """사용자 로그인"""
 
@@ -67,7 +67,7 @@ async def login(
 @router.post("/register", response_model=UserResponse)
 async def register(
     user_data: UserCreate,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """새 사용자 등록"""
 
@@ -138,7 +138,7 @@ async def get_current_user_info(
 async def update_current_user(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """현재 사용자 정보 수정"""
 
@@ -212,7 +212,7 @@ async def create_api_key(
 async def list_users(
     organization_id: int = None,
     admin_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """모든 사용자 목록 (Admin 전용)"""
 
@@ -235,7 +235,7 @@ async def update_user_admin(
     user_id: int,
     user_update: UserUpdate,
     admin_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """사용자 정보 수정 (Admin 전용)"""
 
@@ -291,7 +291,7 @@ async def update_user_admin(
 async def delete_user(
     user_id: int,
     admin_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """사용자 삭제 (Admin 전용)"""
 
