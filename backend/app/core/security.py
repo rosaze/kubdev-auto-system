@@ -3,7 +3,7 @@ Security and Authentication utilities
 보안 및 인증 관련 유틸리티
 """
 
-import jwt
+from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from passlib.context import CryptContext
