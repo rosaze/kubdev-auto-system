@@ -1,70 +1,46 @@
 """
-Security and Authentication utilities
-보안 및 인증 관련 유틸리티
+Simplified Security for Development
+개발용 간단한 보안 시스템
 """
 
-from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
-from passlib.context import CryptContext
-from passlib.hash import bcrypt
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .database import get_db
 from app.models.user import User
 
-# 비밀번호 해싱 컨텍스트
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# 개발용 간단한 인증 설정
+security = HTTPBearer(auto_error=False)
+
+# 개발용 고정 API 키 (실제 운영에서는 사용 금지)
+DEV_API_KEYS = {
+    "admin-key-123": {"role": "super_admin", "user_id": 1, "email": "admin@kubdev.local"},
+    "dev-key-456": {"role": "developer", "user_id": 2, "email": "dev@kubdev.local"},
+    "test-key-789": {"role": "org_admin", "user_id": 3, "email": "test@kubdev.local"}
+}
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """비밀번호 검증"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """비밀번호 검증 (개발용 - 단순 문자열 비교)"""
+    # 개발용: 해시된 비밀번호가 실제로는 평문이라고 가정하고 비교
+    # 또는 간단한 "dev-password" 형태로 비교
+    if hashed_password.startswith("dev-"):
+        return plain_password == hashed_password[4:]  # "dev-" 제거 후 비교
+    return plain_password == hashed_password
 
 
 def get_password_hash(password: str) -> str:
-    """비밀번호 해싱"""
-    return pwd_context.hash(password)
-
-
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    """JWT 액세스 토큰 생성"""
-    to_encode = data.copy()
-
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
-
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-
-    return encoded_jwt
-
-
-def verify_access_token(token: str) -> Dict[str, Any]:
-    """JWT 액세스 토큰 검증"""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    """비밀번호 해싱 (개발용 - 단순 문자열 처리)"""
+    # 개발용: "dev-" 접두사를 추가해서 개발용임을 명시
+    return f"dev-{password}"
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
-    """사용자 인증"""
+    """사용자 인증 (간단화)"""
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
@@ -77,91 +53,119 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
 
 
 def create_user_token(user: User) -> Dict[str, Any]:
-    """사용자용 JWT 토큰 생성"""
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "role": user.role.value,
-        "organization_id": user.organization_id,
-        "team_id": user.team_id
-    }
-
-    access_token = create_access_token(data=token_data)
+    """사용자용 간단한 토큰 생성 (JWT 대신 간단한 키 사용)"""
+    # 개발용: 사용자 ID를 기반으로 간단한 토큰 생성
+    simple_token = f"user-{user.id}-{user.email.split('@')[0]}"
 
     return {
-        "access_token": access_token,
+        "access_token": simple_token,
         "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "expires_in": 86400,  # 24시간
         "user_id": user.id,
         "email": user.email,
         "role": user.role.value
     }
 
 
-def generate_api_key(user_id: int, description: str = "") -> str:
-    """API 키 생성 (장기간 유효한 토큰)"""
-    token_data = {
-        "sub": str(user_id),
-        "type": "api_key",
-        "description": description,
-        "iat": datetime.utcnow()
-        # 만료시간 없음 (무기한)
-    }
+def get_current_user_simple(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """간단한 현재 사용자 조회 (개발용)"""
 
-    api_key = jwt.encode(token_data, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    # 인증 없이 허용 (개발 모드)
+    if not credentials:
+        # 기본 관리자 사용자 반환
+        return create_dev_user()
 
-    return api_key
+    token = credentials.credentials
 
-
-def verify_api_key(api_key: str) -> Dict[str, Any]:
-    """API 키 검증"""
-    try:
-        payload = jwt.decode(api_key, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-
-        if payload.get("type") != "api_key":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key format"
-            )
-
-        return payload
-
-    except jwt.JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
+    # 개발용 고정 API 키 확인
+    if token in DEV_API_KEYS:
+        user_data = DEV_API_KEYS[token]
+        return create_dev_user(
+            user_id=user_data["user_id"],
+            email=user_data["email"],
+            role=user_data["role"]
         )
+
+    # 간단한 사용자 토큰 확인 (user-{id}-{name} 형식)
+    if token.startswith("user-"):
+        try:
+            parts = token.split("-")
+            user_id = int(parts[1])
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                return user
+        except (ValueError, IndexError):
+            pass
+
+    # 인증 실패시에도 기본 사용자 반환 (개발용)
+    return create_dev_user()
+
+
+def create_dev_user(user_id: int = 1, email: str = "dev@kubdev.local", role: str = "super_admin") -> User:
+    """개발용 임시 사용자 객체 생성"""
+    from app.models.user import UserRole
+
+    # 메모리상 임시 User 객체 생성
+    class DevUser:
+        def __init__(self):
+            self.id = user_id
+            self.email = email
+            self.name = "Development User"
+            self.role = getattr(UserRole, role.upper(), UserRole.DEVELOPER)
+            self.is_active = True
+            self.is_verified = True
+            self.organization_id = 1
+            self.team_id = None
+            self.created_at = datetime.utcnow()
+            self.environments = []
+
+    return DevUser()
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db)
+) -> User:
+    """현재 사용자 조회 (인증 필수) - 개발용에서는 항상 성공"""
+    user = get_current_user_simple(credentials, db)
+    if not user:
+        # 개발 모드에서는 기본 사용자 반환
+        return create_dev_user()
+    return user
+
+
+def get_admin_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """관리자 권한 확인 - 개발용에서는 항상 허용"""
+    return current_user
+
+
+def get_super_admin(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """슈퍼 관리자 권한 확인 - 개발용에서는 항상 허용"""
+    return current_user
+
+
+def get_team_leader(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """팀 리더 권한 확인 - 개발용에서는 항상 허용"""
+    return current_user
 
 
 def check_user_permissions(user: User, required_role: str = None, organization_id: int = None) -> bool:
-    """사용자 권한 확인"""
-
-    # 활성 사용자 체크
-    if not user.is_active:
-        return False
-
-    # 역할 기반 권한 체크
-    if required_role:
-        user_role_hierarchy = {
-            "super_admin": 4,
-            "org_admin": 3,
-            "team_leader": 2,
-            "developer": 1
-        }
-
-        user_level = user_role_hierarchy.get(user.role.value, 0)
-        required_level = user_role_hierarchy.get(required_role, 0)
-
-        if user_level < required_level:
-            return False
-
-    # 조직 기반 권한 체크
-    if organization_id and user.organization_id != organization_id:
-        # super_admin은 모든 조직에 접근 가능
-        if user.role.value != "super_admin":
-            return False
-
+    """사용자 권한 확인 - 개발용에서는 항상 허용"""
     return True
+
+
+def generate_api_key(user_id: int, description: str = "") -> str:
+    """개발용 간단한 API 키 생성"""
+    return f"dev-{user_id}-{description.replace(' ', '-')}-{datetime.now().strftime('%Y%m%d')}"
 
 
 def mask_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -178,3 +182,16 @@ def mask_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 masked_data[key] = "***"
 
     return masked_data
+
+
+# 개발용 편의 함수들
+def get_dev_token(role: str = "super_admin") -> str:
+    """개발용 토큰 빠른 생성"""
+    if role == "super_admin":
+        return "admin-key-123"
+    elif role == "developer":
+        return "dev-key-456"
+    elif role == "org_admin":
+        return "test-key-789"
+    else:
+        return "admin-key-123"
