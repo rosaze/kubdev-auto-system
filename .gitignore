@@ -2,3 +2,7 @@
 # Python
 *.pyc
 __pycache__/
+
+# Gemini CLI
+.claude/
+
