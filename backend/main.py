@@ -8,6 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import check_database_connection
 from app.api.routes import api_router
+from app.core.logging_config import setup_logging
+
+# 로깅 설정
+setup_logging()
 
 # FastAPI 앱 인스턴스 생성
 app = FastAPI(

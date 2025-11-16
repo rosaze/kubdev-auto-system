@@ -7,6 +7,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import structlog
 
 from app.models.environment import EnvironmentInstance, EnvironmentStatus
 from app.models.project_template import ProjectTemplate
@@ -17,18 +18,22 @@ from app.core.config import settings
 class EnvironmentService:
     """개발 환경 관리 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, logger: Optional[structlog.stdlib.BoundLogger] = None):
         self.db = db
         self.k8s_service = KubernetesService()
+        self.log = logger or structlog.get_logger(__name__)
 
     async def deploy_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경을 K8s 클러스터에 배포"""
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Starting environment deployment")
 
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
 
         if not environment:
+            log.error("Deployment failed: environment not found in DB")
             raise Exception("Environment not found")
 
         template = self.db.query(ProjectTemplate).filter(
@@ -36,6 +41,7 @@ class EnvironmentService:
         ).first()
 
         if not template:
+            log.error("Deployment failed: template not found", template_id=environment.template_id)
             raise Exception("Template not found")
 
         try:
@@ -43,9 +49,11 @@ class EnvironmentService:
             environment.status = EnvironmentStatus.CREATING
             environment.status_message = "Deploying to Kubernetes..."
             self.db.commit()
+            log.info("Set environment status to CREATING")
 
             # 네임스페이스 생성 (없으면)
             await self.k8s_service.create_namespace(environment.k8s_namespace)
+            log.info("Namespace ensured", namespace=environment.k8s_namespace)
 
             # ResourceQuota 생성 (자원 사용량 제한)
             quota_name = f"quota-{environment.k8s_deployment_name}"
@@ -55,8 +63,9 @@ class EnvironmentService:
                 cpu_limit=template.resource_limits.get("cpu", settings.DEFAULT_CPU_LIMIT),
                 memory_limit=template.resource_limits.get("memory", settings.DEFAULT_MEMORY_LIMIT),
                 storage_limit=template.resource_limits.get("storage", settings.DEFAULT_STORAGE_LIMIT),
-                pod_limit=5  # 기본값: 사용자당 최대 5개 Pod
+                pod_limit=5
             )
+            log.info("ResourceQuota created", quota_name=quota_name)
 
             # 환경변수 준비
             env_vars = {
@@ -82,6 +91,7 @@ class EnvironmentService:
                 git_repo=environment.git_repository,
                 git_branch=environment.git_branch or "main"
             )
+            log.info("Deployment created", deployment_name=environment.k8s_deployment_name)
 
             # Service 생성
             service_result = await self.k8s_service.create_service(
@@ -90,6 +100,7 @@ class EnvironmentService:
                 deployment_name=environment.k8s_deployment_name,
                 port=8080
             )
+            log.info("Service created", service_name=environment.k8s_service_name)
 
             # Ingress 생성 (외부 접속용)
             ingress_host = f"{environment.k8s_deployment_name}.kubdev.local"
@@ -102,6 +113,7 @@ class EnvironmentService:
                 host=ingress_host,
                 service_port=8080
             )
+            log.info("Ingress created", ingress_name=ingress_name, host=ingress_host)
 
             # 환경 정보 업데이트
             environment.k8s_ingress_name = ingress_name
@@ -110,18 +122,13 @@ class EnvironmentService:
             environment.status_message = "Environment is ready"
             environment.started_at = datetime.utcnow()
 
-            # 만료 시간 설정 (기본 8시간)
             if not environment.expires_at:
-                environment.expires_at = datetime.utcnow() + timedelta(
-                    hours=settings.ENVIRONMENT_TIMEOUT_HOURS
-                )
+                environment.expires_at = datetime.utcnow() + timedelta(hours=settings.ENVIRONMENT_TIMEOUT_HOURS)
 
-            # 포트 매핑 정보 저장
             environment.port_mappings = template.exposed_ports or []
-
             self.db.commit()
+            log.info("Environment deployment successful, waiting for ready state")
 
-            # 배포 완료 대기 (백그라운드에서)
             asyncio.create_task(self._wait_for_deployment_ready(environment_id))
 
             return {
@@ -133,7 +140,7 @@ class EnvironmentService:
             }
 
         except Exception as e:
-            # 에러 발생 시 상태 업데이트
+            log.error("Deployment failed with an exception", error=str(e), exc_info=True)
             environment.status = EnvironmentStatus.ERROR
             environment.status_message = f"Deployment failed: {str(e)}"
             self.db.commit()
@@ -141,12 +148,14 @@ class EnvironmentService:
 
     async def _wait_for_deployment_ready(self, environment_id: int, max_wait_time: int = 300):
         """Deployment가 Ready 상태가 될 때까지 대기"""
-
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Waiting for deployment to become ready")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
 
         if not environment:
+            log.error("Cannot wait for deployment: environment not found")
             return
 
         start_time = datetime.utcnow()
@@ -159,41 +168,43 @@ class EnvironmentService:
                 )
 
                 if status.get("ready_replicas", 0) >= 1:
-                    # Deployment 준비 완료
+                    log.info("Deployment is ready")
                     environment.status = EnvironmentStatus.RUNNING
                     environment.status_message = "Environment is running and ready"
                     self.db.commit()
                     break
 
-                # 30초 대기
+                log.info("Deployment not ready yet, waiting...", ready_replicas=status.get("ready_replicas", 0))
                 await asyncio.sleep(30)
 
             except Exception as e:
+                log.error("Health check failed while waiting for deployment", error=str(e), exc_info=True)
                 environment.status = EnvironmentStatus.ERROR
                 environment.status_message = f"Health check failed: {str(e)}"
                 self.db.commit()
                 break
-
         else:
-            # 타임아웃
+            log.warning("Deployment timeout: environment did not become ready")
             environment.status = EnvironmentStatus.ERROR
             environment.status_message = "Deployment timeout - environment did not become ready"
             self.db.commit()
 
     async def start_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경 시작"""
-
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Starting environment")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
 
         if not environment:
+            log.error("Start failed: environment not found")
             raise Exception("Environment not found")
 
         if environment.status == EnvironmentStatus.RUNNING:
+            log.warning("Start ignored: environment is already running")
             return {"message": "Environment is already running"}
 
-        # Deployment 스케일 업
         try:
             deployment_status = await self.k8s_service.get_deployment_status(
                 namespace=environment.k8s_namespace,
@@ -201,18 +212,21 @@ class EnvironmentService:
             )
 
             if deployment_status.get("status") == "not_found":
-                # Deployment가 없으면 새로 생성
+                log.info("Deployment not found, creating a new one")
                 await self.deploy_environment(environment_id)
             else:
-                # 존재하면 시작
+                log.info("Scaling up existing deployment")
+                # TODO: Implement scale-up logic in k8s_service
                 environment.status = EnvironmentStatus.RUNNING
                 environment.started_at = datetime.utcnow()
                 environment.last_accessed_at = datetime.utcnow()
                 self.db.commit()
-
+            
+            log.info("Environment started successfully")
             return {"message": "Environment started successfully"}
 
         except Exception as e:
+            log.error("Failed to start environment", error=str(e), exc_info=True)
             environment.status = EnvironmentStatus.ERROR
             environment.status_message = f"Failed to start: {str(e)}"
             self.db.commit()
@@ -220,30 +234,32 @@ class EnvironmentService:
 
     async def stop_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경 중지"""
-
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Stopping environment")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
 
         if not environment:
+            log.error("Stop failed: environment not found")
             raise Exception("Environment not found")
 
         try:
-            # Deployment 삭제 (리소스 해제)
+            log.info("Deleting deployment to stop environment", deployment_name=environment.k8s_deployment_name)
             await self.k8s_service.delete_deployment(
                 namespace=environment.k8s_namespace,
                 deployment_name=environment.k8s_deployment_name
             )
 
-            # 상태 업데이트
             environment.status = EnvironmentStatus.STOPPED
             environment.stopped_at = datetime.utcnow()
             environment.status_message = "Environment stopped"
             self.db.commit()
-
+            log.info("Environment stopped successfully")
             return {"message": "Environment stopped successfully"}
 
         except Exception as e:
+            log.error("Failed to stop environment", error=str(e), exc_info=True)
             environment.status = EnvironmentStatus.ERROR
             environment.status_message = f"Failed to stop: {str(e)}"
             self.db.commit()
@@ -251,61 +267,47 @@ class EnvironmentService:
 
     async def restart_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경 재시작"""
-
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Restarting environment")
         await self.stop_environment(environment_id)
-        await asyncio.sleep(10)  # 완전히 중지될 때까지 대기
+        log.info("Waiting for environment to stop before restarting")
+        await asyncio.sleep(10)
         await self.start_environment(environment_id)
-
+        log.info("Environment restarted successfully")
         return {"message": "Environment restarted successfully"}
 
     async def delete_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경 완전 삭제"""
-
+        log = self.log.bind(environment_id=environment_id)
+        log.info("Deleting environment permanently")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
 
         if not environment:
+            log.error("Delete failed: environment not found")
             raise Exception("Environment not found")
 
         try:
-            # K8s 리소스 삭제
+            log.info("Deleting K8s deployment", deployment_name=environment.k8s_deployment_name)
             await self.k8s_service.delete_deployment(
                 namespace=environment.k8s_namespace,
-                deployment_name=environment.k8s_deployment_name
+                deployment_name=environment.k8s_deployment_.name
             )
 
             if environment.k8s_service_name:
+                log.info("Deleting K8s service", service_name=environment.k8s_service_name)
                 await self.k8s_service.delete_service(
                     namespace=environment.k8s_namespace,
                     service_name=environment.k8s_service_name
                 )
 
-            # 데이터베이스에서 삭제
+            log.info("Deleting environment from database")
             self.db.delete(environment)
             self.db.commit()
-
+            log.info("Environment deleted successfully")
             return {"message": "Environment deleted successfully"}
 
         except Exception as e:
+            log.error("Failed to delete environment", error=str(e), exc_info=True)
             raise Exception(f"Failed to delete environment: {str(e)}")
-
-    async def get_environment_metrics(self, environment_id: int) -> Dict[str, Any]:
-        """환경 메트릭 조회"""
-
-        environment = self.db.query(EnvironmentInstance).filter(
-            EnvironmentInstance.id == environment_id
-        ).first()
-
-        if not environment:
-            raise Exception("Environment not found")
-
-        # K8s 메트릭 조회 (실제 구현에서는 metrics-server나 Prometheus 사용)
-        # 여기서는 기본값 반환
-        return {
-            "environment_id": environment_id,
-            "cpu_usage": 45.2,
-            "memory_usage": 68.5,
-            "storage_usage": 23.1,
-            "uptime_seconds": 3600
-        }
