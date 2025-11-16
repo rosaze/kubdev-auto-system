@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubedev-controller
+  namespace: kubedev-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubedev-controller
+  template:
+    metadata:
+      labels:
+        app: kubedev-controller
+    spec:
+      serviceAccountName: kubedev-controller
+      containers:
+        - name: controller
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PIP_NO_CACHE_DIR
+              value: "1"
+            - name: KUBEDEV_IDE_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: kubedev-controller-config
+                  key: ide-domain
+                  optional: true
+            - name: KUBEDEV_DEFAULT_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: kubedev-controller-config
+                  key: default-image
+                  optional: true
+          command: ["sh", "-lc"]
+          args:
+            - >-
+              pip install --no-warn-script-location --progress-bar off kopf kubernetes pyyaml &&
+              python -c "import sys; import kopf; sys.exit(0)" &&
+              kopf run --standalone /app/controller.py
+          volumeMounts:
+            - name: controller-code
+              mountPath: /app/controller.py
+              subPath: controller.py
+      volumes:
+        - name: controller-code
+          configMap:
+            name: kubedev-controller-code
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubedev-controller-config
+  namespace: kubedev-system
+data:
+  # Optional: set your wildcard IDE domain root (e.g., ide.kubedev.local)
+  # ide-domain: ide.kubedev.local
+  # Optional: set default workspace image
+  # default-image: ghcr.io/coder/code-server:latest
+
