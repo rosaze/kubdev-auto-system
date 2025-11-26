@@ -6,12 +6,22 @@ K8s 기반 자동 개발 환경 프로비저닝 백엔드
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.database import check_database_connection
+from app.core.database import check_database_connection, create_all_tables
 from app.api.routes import api_router
 from app.core.logging_config import setup_logging
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 로깅 설정
 setup_logging()
+
+# 데이터베이스 테이블 생성 (개발 환경)
+try:
+    create_all_tables()
+    logger.info("Database tables initialized successfully")
+except Exception as e:
+    logger.warning(f"Failed to initialize tables: {e}")
 
 # FastAPI 앱 인스턴스 생성
 app = FastAPI(
