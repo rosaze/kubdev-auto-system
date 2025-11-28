@@ -23,7 +23,7 @@ export default function LoginPage() {
         access_token: string
         token_type: string
         user: any
-      }>("/v1/auth/login", { access_code: code.trim().toUpperCase() })
+      }>("/auth/login", { access_code: code.trim().toUpperCase() })
 
       // Store token and basic user info
       localStorage.setItem("accessToken", res.access_token)

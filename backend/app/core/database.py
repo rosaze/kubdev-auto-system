@@ -56,7 +56,16 @@ def create_all_tables():
     모든 테이블 생성
     개발 환경에서만 사용 (프로덕션에서는 Alembic 사용)
     """
+    # 모델 import를 여기서 수행하여 Base.metadata에 등록
+    from app.models import User, Organization, Team, ProjectTemplate, EnvironmentInstance, ResourceMetric
+    
     if settings.DEBUG:
+        # 개발 환경인 경우
+        Base.metadata.create_all(bind=engine)
+        logger.info("All database tables created")
+    else:
+        # 개발 환경이 아닌 경우
+        # TODO: 원래는 pass해야 함, 하지만 데모를 위해 강제로 생성. 나중에 제거 필요.
         Base.metadata.create_all(bind=engine)
         logger.info("All database tables created")
 

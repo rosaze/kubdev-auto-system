@@ -1,5 +1,5 @@
 export async function apiGet<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-  const url = path.startsWith("/") ? `/api${path}` : `/api/${path}`
+  const url = path.startsWith("/") ? `/api/v1${path}` : `/api/v1/${path}`
   const res = await fetch(url, {
     ...init,
     headers: {
@@ -16,7 +16,7 @@ export async function apiGet<T = unknown>(path: string, init?: RequestInit): Pro
 }
 
 export async function apiPost<T = unknown, B = unknown>(path: string, body?: B, init?: RequestInit): Promise<T> {
-  const url = path.startsWith("/") ? `/api${path}` : `/api/${path}`
+  const url = path.startsWith("/") ? `/api/v1${path}` : `/api/v1/${path}`
   const res = await fetch(url, {
     method: "POST",
     ...init,
