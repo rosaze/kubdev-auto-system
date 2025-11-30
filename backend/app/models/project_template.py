@@ -60,7 +60,6 @@ class ProjectTemplate(Base):
 
     # 접근 권한
     is_public = Column(Boolean, default=False)   # 공개 템플릿 여부
-    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
 
     # 생성자 정보
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -73,7 +72,6 @@ class ProjectTemplate(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # 관계
-    organization = relationship("Organization", back_populates="project_templates")
     creator = relationship("User")
     environments = relationship("EnvironmentInstance", back_populates="template")
 

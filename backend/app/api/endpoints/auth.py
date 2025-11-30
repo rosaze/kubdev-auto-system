@@ -16,7 +16,6 @@ from app.core.security import (
 )
 from app.core.dependencies import get_current_user, get_admin_user
 from app.models.user import User, UserRole
-from app.models.organization import Organization, Team
 from app.schemas.user import (
     UserCreate,
     UserResponse,
