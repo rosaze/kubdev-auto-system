@@ -63,7 +63,9 @@ async def login(
     return UserTokenResponse(
         access_token=token_data["access_token"],
         token_type=token_data["token_type"],
-        user=user
+        role=user.role,
+        user_id=user.id,
+        name=user.name
     )
 
 
@@ -93,38 +95,13 @@ async def create_user(
             detail="Failed to generate unique access code"
         )
 
-    # 조직 존재 확인
-    if user_data.organization_id:
-        organization = db.query(Organization).filter(
-            Organization.id == user_data.organization_id
-        ).first()
-        if not organization:
-            log.warning("User creation failed: organization not found", org_id=user_data.organization_id)
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found"
-            )
-
-    # 팀 존재 확인
-    if user_data.team_id:
-        team = db.query(Team).filter(Team.id == user_data.team_id).first()
-        if not team:
-            log.warning("User creation failed: team not found", team_id=user_data.team_id)
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Team not found"
-            )
-
     try:
         # 사용자 생성
         user = User(
             name=user_data.name,
             hashed_password=access_code,  # 접속 코드를 hashed_password에 저장 (암호화 없이)
             role=user_data.role,
-            organization_id=user_data.organization_id,
-            team_id=user_data.team_id,
-            is_active=True,
-            is_verified=True
+            is_active=True
         )
 
         db.add(user)
@@ -162,16 +139,6 @@ async def update_current_user(
     try:
         # 본인은 역할 변경 불가
         update_data = user_update.dict(exclude_unset=True, exclude={"role"})
-
-        # 팀 변경 시 존재 확인
-        if "team_id" in update_data and update_data["team_id"]:
-            team = db.query(Team).filter(Team.id == update_data["team_id"]).first()
-            if not team:
-                log.warning("User update failed: team not found", user_id=current_user.id, team_id=update_data["team_id"])
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Team not found"
-                )
 
         # 업데이트 적용
         for field, value in update_data.items():
@@ -231,23 +198,12 @@ async def create_api_key(
 # Admin 전용 엔드포인트
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
-    organization_id: int = None,
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """모든 사용자 목록 (Admin 전용)"""
-    log.info("Admin listing users", admin_id=admin_user.id, organization_id=organization_id)
-    query = db.query(User)
-
-    # 조직 필터링
-    if organization_id:
-        query = query.filter(User.organization_id == organization_id)
-
-    # org_admin은 자신의 조직만, super_admin은 모든 조직
-    if admin_user.role == UserRole.ORG_ADMIN:
-        query = query.filter(User.organization_id == admin_user.organization_id)
-
-    users = query.all()
+    log.info("Admin listing users", admin_id=admin_user.id)
+    users = db.query(User).all()
     log.info("Found users", count=len(users))
     return users
 
@@ -269,29 +225,8 @@ async def update_user_admin(
             detail="User not found"
         )
 
-    # 권한 체크: org_admin은 자신의 조직 사용자만 수정 가능
-    if admin_user.role == UserRole.ORG_ADMIN:
-        if target_user.organization_id != admin_user.organization_id:
-            log.warning("Admin user update failed: permission denied", admin_id=admin_user.id, target_user_id=user_id)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No permission to modify this user"
-            )
-
     try:
         update_data = user_update.dict(exclude_unset=True)
-
-        # 역할 변경 체크
-        if "role" in update_data:
-            new_role = update_data["role"]
-
-            # org_admin은 super_admin 역할을 부여할 수 없음
-            if admin_user.role == UserRole.ORG_ADMIN and new_role == UserRole.SUPER_ADMIN:
-                log.warning("Admin user update failed: cannot assign super_admin role", admin_id=admin_user.id)
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot assign super_admin role"
-                )
 
         # 업데이트 적용
         for field, value in update_data.items():
@@ -336,15 +271,6 @@ async def delete_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete yourself"
         )
-
-    # 권한 체크
-    if admin_user.role == UserRole.ORG_ADMIN:
-        if target_user.organization_id != admin_user.organization_id:
-            log.warning("Admin user delete failed: permission denied", admin_id=admin_user.id, target_user_id=user_id)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No permission to delete this user"
-            )
 
     # 활성 환경이 있는지 체크
     from app.models.environment import EnvironmentInstance
