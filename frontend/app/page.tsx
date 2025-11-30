@@ -5,15 +5,37 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { apiPost } from "@/lib/api"
 
 export default function LoginPage() {
   const [code, setCode] = useState("")
   const router = useRouter()
 
-  const handleLogin = (type: "admin" | "user") => {
-    if (code.trim()) {
-      localStorage.setItem("accessCode", code)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleLogin = async (type: "admin" | "user") => {
+    if (!code.trim()) return
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await apiPost<{
+        access_token: string
+        token_type: string
+        user: any
+      }>("/auth/login", { access_code: code.trim().toUpperCase() })
+
+      // Store token and basic user info
+      localStorage.setItem("accessToken", res.access_token)
+      localStorage.setItem("tokenType", res.token_type)
+      localStorage.setItem("accessCode", code.trim().toUpperCase())
+      localStorage.setItem("currentUser", JSON.stringify(res.user))
+
       router.push(`/${type}`)
+    } catch (e: any) {
+      setError(e?.message || "로그인에 실패했습니다")
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -57,6 +79,7 @@ export default function LoginPage() {
                 }
               }}
             />
+            {error && <p className="text-sm text-red-500">{error}</p>}
           </div>
 
           <div className="space-y-3">
@@ -65,7 +88,7 @@ export default function LoginPage() {
               disabled={!code.trim()}
               className="w-full h-12 text-base font-medium"
             >
-              관계자로 로그인
+              {loading ? "로그인 중..." : "관계자로 로그인"}
             </Button>
             <Button
               onClick={() => handleLogin("user")}
@@ -73,7 +96,7 @@ export default function LoginPage() {
               variant="outline"
               className="w-full h-12 text-base font-medium"
             >
-              사용자로 로그인
+              {loading ? "로그인 중..." : "사용자로 로그인"}
             </Button>
           </div>
         </CardContent>

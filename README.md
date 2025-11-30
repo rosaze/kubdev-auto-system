@@ -73,14 +73,31 @@ kubdev-auto-system/
 
 ## 🔧 개발 환경 설정
 
+#### 백엔드 서버 실행
 ```bash
-# 백엔드 서버 실행
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# Docker Compose로 전체 스택 실행
-docker-compose up -d
+#### 프론트엔드 실행
+```bash
+cd frontend
+npm install --legacy-peer-deps
+npm run dev
+```
+
+#### Docker Compose로 전체 스택 실행
+```bash
+docker compose up -d
+```
+
+#### 초기 사용자 생성(데이터베이스)
+```bash
+# 1. docker-compose를 통해 PostgreSQL 실행
+# 2. 백엔드 서버 최초 1회 실행 -> 테이블 생성됨
+cd backend
+python3 create_initial_user.py
 ```
 
 ## 📚 API 문서

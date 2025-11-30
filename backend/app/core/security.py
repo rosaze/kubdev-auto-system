@@ -5,6 +5,8 @@ Simplified Security for Development
 
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import secrets
+import string
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -18,10 +20,16 @@ security = HTTPBearer(auto_error=False)
 
 # 개발용 고정 API 키 (실제 운영에서는 사용 금지)
 DEV_API_KEYS = {
-    "admin-key-123": {"role": "super_admin", "user_id": 1, "email": "admin@kubdev.local"},
-    "dev-key-456": {"role": "developer", "user_id": 2, "email": "dev@kubdev.local"},
-    "test-key-789": {"role": "org_admin", "user_id": 3, "email": "test@kubdev.local"}
+    "admin-key-123": {"role": "super_admin", "user_id": 1, "access_code": "ADMIN"},
+    "dev-key-456": {"role": "developer", "user_id": 2, "access_code": "DEV01"},
+    "test-key-789": {"role": "org_admin", "user_id": 3, "access_code": "TEST1"}
 }
+
+
+def generate_access_code(length: int = 5) -> str:
+    """5자리 접속 코드 자동 생성 (영문 대문자 + 숫자)"""
+    characters = string.ascii_uppercase + string.digits  # A-Z, 0-9
+    return ''.join(secrets.choice(characters) for _ in range(length))
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -39,30 +47,31 @@ def get_password_hash(password: str) -> str:
     return f"dev-{password}"
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
-    """사용자 인증 (간단화)"""
-    user = db.query(User).filter(User.email == email).first()
-
+def authenticate_user(db: Session, access_code: str) -> Optional[User]:
+    """사용자 인증 (접속 코드 기반)"""
+    # hashed_password 필드가 실제로는 접속 코드를 저장함 (개발 중이므로 암호화 없이)
+    user = db.query(User).filter(User.hashed_password == access_code.upper()).first()
+    
     if not user:
         return None
-
-    if not verify_password(password, user.hashed_password):
+    
+    if not user.is_active:
         return None
-
+    
     return user
 
 
 def create_user_token(user: User) -> Dict[str, Any]:
     """사용자용 간단한 토큰 생성 (JWT 대신 간단한 키 사용)"""
-    # 개발용: 사용자 ID를 기반으로 간단한 토큰 생성
-    simple_token = f"user-{user.id}-{user.email.split('@')[0]}"
+    # 개발용: 접속 코드를 기반으로 간단한 토큰 생성
+    simple_token = f"user-{user.id}-{user.hashed_password}"
 
     return {
         "access_token": simple_token,
         "token_type": "bearer",
         "expires_in": 86400,  # 24시간
         "user_id": user.id,
-        "email": user.email,
+        "access_code": user.hashed_password,
         "role": user.role.value
     }
 
@@ -85,7 +94,7 @@ def get_current_user_simple(
         user_data = DEV_API_KEYS[token]
         return create_dev_user(
             user_id=user_data["user_id"],
-            email=user_data["email"],
+            access_code=user_data["access_code"],
             role=user_data["role"]
         )
 
@@ -104,7 +113,7 @@ def get_current_user_simple(
     return create_dev_user()
 
 
-def create_dev_user(user_id: int = 1, email: str = "dev@kubdev.local", role: str = "super_admin") -> User:
+def create_dev_user(user_id: int = 1, access_code: str = "ADMIN", role: str = "super_admin") -> User:
     """개발용 임시 사용자 객체 생성"""
     from app.models.user import UserRole
 
@@ -112,7 +121,7 @@ def create_dev_user(user_id: int = 1, email: str = "dev@kubdev.local", role: str
     class DevUser:
         def __init__(self):
             self.id = user_id
-            self.email = email
+            self.hashed_password = access_code  # 접속 코드
             self.name = "Development User"
             self.role = getattr(UserRole, role.upper(), UserRole.DEVELOPER)
             self.is_active = True

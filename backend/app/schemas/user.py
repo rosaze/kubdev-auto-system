@@ -11,16 +11,17 @@ from app.models.user import UserRole
 
 class UserBase(BaseModel):
     """사용자 기본 스키마"""
-    email: EmailStr
     name: str = Field(..., min_length=1, max_length=255)
     role: UserRole = UserRole.DEVELOPER
 
 
-class UserCreate(UserBase):
-    """사용자 생성 스키마"""
-    password: str = Field(..., min_length=8, max_length=100)
+class UserCreate(BaseModel):
+    """사용자 생성 스키마 (관리자용)"""
+    name: str = Field(..., min_length=1, max_length=255)
+    role: UserRole = UserRole.DEVELOPER
     organization_id: Optional[int] = None
     team_id: Optional[int] = None
+    # hashed_password(접속 코드)는 서버에서 자동 생성
 
 
 class UserUpdate(BaseModel):
@@ -35,6 +36,7 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     """사용자 응답 스키마"""
     id: int
+    hashed_password: str = Field(..., description="접속 코드")
     is_active: bool
     is_verified: bool
     organization_id: Optional[int]
@@ -49,8 +51,9 @@ class UserResponse(UserBase):
 
 class UserLogin(BaseModel):
     """로그인 요청 스키마"""
-    email: EmailStr
-    password: str
+    access_code: str = Field(..., min_length=5, max_length=10, description="접속 코드")
+    
+    # 참고: access_code가 DB의 hashed_password와 매칭됨
 
 
 class UserTokenResponse(BaseModel):

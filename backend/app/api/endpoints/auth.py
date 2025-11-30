@@ -11,8 +11,8 @@ from app.core.database import get_db
 from app.core.security import (
     authenticate_user,
     create_user_token,
-    get_password_hash,
-    generate_api_key
+    generate_api_key,
+    generate_access_code
 )
 from app.core.dependencies import get_current_user, get_admin_user
 from app.models.user import User, UserRole
@@ -34,19 +34,19 @@ async def login(
     login_data: UserLogin,
     db: Session = Depends(get_db)
 ):
-    """사용자 로그인"""
-    log.info("Login attempt", email=login_data.email)
-    user = authenticate_user(db, login_data.email, login_data.password)
+    """접속 코드로 로그인"""
+    log.info("Login attempt", access_code=login_data.access_code)
+    user = authenticate_user(db, login_data.access_code)
     if not user:
-        log.warning("Login failed: incorrect email or password", email=login_data.email)
+        log.warning("Login failed: invalid access code", access_code=login_data.access_code)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Invalid access code",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     if not user.is_active:
-        log.warning("Login failed: inactive user", email=login_data.email, user_id=user.id)
+        log.warning("Login failed: inactive user", access_code=login_data.access_code, user_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
@@ -58,7 +58,7 @@ async def login(
 
     # JWT 토큰 생성
     token_data = create_user_token(user)
-    log.info("Login successful", user_id=user.id, email=user.email)
+    log.info("Login successful", user_id=user.id, access_code=user.hashed_password)
 
     return UserTokenResponse(
         access_token=token_data["access_token"],
@@ -67,20 +67,30 @@ async def login(
     )
 
 
-@router.post("/register", response_model=UserResponse)
-async def register(
+@router.post("/create-user", response_model=UserResponse)
+async def create_user(
     user_data: UserCreate,
+    admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
-    """새 사용자 등록"""
-    log.info("Registration attempt", email=user_data.email)
-    # 이메일 중복 체크
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
-    if existing_user:
-        log.warning("Registration failed: email already registered", email=user_data.email)
+    """새 사용자 생성 (관리자 전용)"""
+    log.info("User creation attempt by admin", admin_id=admin_user.id, new_user_name=user_data.name)
+    
+    # 접속 코드 자동 생성 (중복 확인)
+    max_attempts = 10
+    access_code = None
+    for _ in range(max_attempts):
+        temp_code = generate_access_code()
+        existing = db.query(User).filter(User.hashed_password == temp_code).first()
+        if not existing:
+            access_code = temp_code
+            break
+    
+    if not access_code:
+        log.error("Failed to generate unique access code")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate unique access code"
         )
 
     # 조직 존재 확인
@@ -89,7 +99,7 @@ async def register(
             Organization.id == user_data.organization_id
         ).first()
         if not organization:
-            log.warning("Registration failed: organization not found", org_id=user_data.organization_id)
+            log.warning("User creation failed: organization not found", org_id=user_data.organization_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Organization not found"
@@ -99,7 +109,7 @@ async def register(
     if user_data.team_id:
         team = db.query(Team).filter(Team.id == user_data.team_id).first()
         if not team:
-            log.warning("Registration failed: team not found", team_id=user_data.team_id)
+            log.warning("User creation failed: team not found", team_id=user_data.team_id)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Team not found"
@@ -107,26 +117,25 @@ async def register(
 
     try:
         # 사용자 생성
-        hashed_password = get_password_hash(user_data.password)
-
         user = User(
-            email=user_data.email,
             name=user_data.name,
-            hashed_password=hashed_password,
+            hashed_password=access_code,  # 접속 코드를 hashed_password에 저장 (암호화 없이)
             role=user_data.role,
             organization_id=user_data.organization_id,
-            team_id=user_data.team_id
+            team_id=user_data.team_id,
+            is_active=True,
+            is_verified=True
         )
 
         db.add(user)
         db.commit()
         db.refresh(user)
-        log.info("User registered successfully", user_id=user.id, email=user.email)
+        log.info("User created successfully", user_id=user.id, access_code=access_code, created_by=admin_user.id)
         return user
 
     except Exception as e:
         db.rollback()
-        log.error("Registration failed: internal server error", email=user_data.email, error=str(e), exc_info=True)
+        log.error("User creation failed: internal server error", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create user: {str(e)}"
