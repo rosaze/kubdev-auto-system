@@ -4,7 +4,6 @@ API 요청/응답 스키마
 """
 
 from .user import UserCreate, UserResponse, UserUpdate
-from .organization import OrganizationCreate, OrganizationResponse, TeamCreate, TeamResponse
 from .project_template import ProjectTemplateCreate, ProjectTemplateResponse, ProjectTemplateUpdate
 from .environment import EnvironmentCreate, EnvironmentResponse, EnvironmentUpdate
 from .resource_metrics import ResourceMetricResponse
@@ -13,10 +12,6 @@ __all__ = [
     "UserCreate",
     "UserResponse",
     "UserUpdate",
-    "OrganizationCreate",
-    "OrganizationResponse",
-    "TeamCreate",
-    "TeamResponse",
     "ProjectTemplateCreate",
     "ProjectTemplateResponse",
     "ProjectTemplateUpdate",

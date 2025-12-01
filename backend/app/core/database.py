@@ -57,7 +57,7 @@ def create_all_tables():
     개발 환경에서만 사용 (프로덕션에서는 Alembic 사용)
     """
     # 모델 import를 여기서 수행하여 Base.metadata에 등록
-    from app.models import User, Organization, Team, ProjectTemplate, EnvironmentInstance, ResourceMetric
+    from app.models import User, ProjectTemplate, EnvironmentInstance, ResourceMetric
     
     if settings.DEBUG:
         # 개발 환경인 경우

@@ -62,9 +62,7 @@ async def login(
     return UserTokenResponse(
         access_token=token_data["access_token"],
         token_type=token_data["token_type"],
-        role=user.role,
-        user_id=user.id,
-        name=user.name
+        user=user
     )
 
 

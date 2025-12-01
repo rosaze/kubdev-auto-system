@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User, UserRole
 from app.models.environment import EnvironmentInstance, EnvironmentStatus
-from app.models.organization import Organization
 from app.models.project_template import ProjectTemplate
 from app.services.kubernetes_service import KubernetesService
 from app.services.environment_service import EnvironmentService
@@ -48,7 +47,6 @@ class BatchUserService:
         prefix: str,
         count: int,
         template_id: int,
-        organization_id: int,
         resource_quota: Dict
     ) -> Dict:
         """대량 사용자 계정 + 환경 생성"""
@@ -69,13 +67,7 @@ class BatchUserService:
             if not template:
                 raise ValueError(f"Template {template_id} not found")
 
-            # 3. 조직 정보 확인
-            organization = self.db.query(Organization).filter(
-                Organization.id == organization_id
-            ).first()
-
-            if not organization:
-                raise ValueError(f"Organization {organization_id} not found")
+            # 조직 정보 확인 로직 제거
 
             # 4. 병렬 처리로 사용자 생성
             logger.info(f"Starting batch creation of {count} users with prefix '{prefix}'")
@@ -90,7 +82,6 @@ class BatchUserService:
                     semaphore=semaphore,
                     username=username,
                     template=template,
-                    organization_id=organization_id,
                     resource_quota=resource_quota
                 )
                 tasks.append(task)
@@ -142,7 +133,6 @@ class BatchUserService:
         semaphore: asyncio.Semaphore,
         username: str,
         template: ProjectTemplate,
-        organization_id: int,
         resource_quota: Dict
     ) -> Dict:
         """세마포어를 사용한 단일 사용자 생성"""
@@ -151,7 +141,6 @@ class BatchUserService:
             return await self._create_single_user_internal(
                 username=username,
                 template=template,
-                organization_id=organization_id,
                 resource_quota=resource_quota
             )
 
@@ -159,7 +148,6 @@ class BatchUserService:
         self,
         username: str,
         template: ProjectTemplate,
-        organization_id: int,
         resource_quota: Dict
     ) -> Dict:
         """내부 단일 사용자 생성 로직"""
@@ -179,7 +167,6 @@ class BatchUserService:
                 name=username,
                 hashed_password=get_password_hash(password),
                 role=UserRole.DEVELOPER,
-                organization_id=organization_id,
                 is_active=True,
                 is_verified=True
             )
@@ -309,7 +296,6 @@ class BatchUserService:
         self,
         username: str,
         template_id: int,
-        organization_id: int,
         resource_quota: Dict,
         custom_password: Optional[str] = None
     ) -> Dict:
@@ -330,7 +316,6 @@ class BatchUserService:
             result = await self._create_single_user_internal(
                 username=username,
                 template=template,
-                organization_id=organization_id,
                 resource_quota=resource_quota
             )
 

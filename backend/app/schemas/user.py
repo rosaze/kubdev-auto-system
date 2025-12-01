@@ -42,7 +42,7 @@ class UserResponse(UserBase):
 
 class UserLogin(BaseModel):
     """로그인 요청 스키마"""
-    access_code: str = Field(..., min_length=5, max_length=5, pattern="^[A-Z]{5}$", description="접속 코드")
+    access_code: str = Field(..., min_length=5, max_length=5, description="접속 코드")
     
     # 참고: access_code가 DB의 hashed_password와 매칭됨
 
