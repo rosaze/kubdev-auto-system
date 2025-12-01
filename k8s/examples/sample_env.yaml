@@ -1,0 +1,16 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: env-1-sample
+  namespace: kubedev-users
+spec:
+  userName: dev
+  templateId: node-20
+  git:
+    repoUrl: https://github.com/vercel/next.js
+    ref: canary
+  commands:
+    start: npm run dev
+  ports:
+    - 3000
+
