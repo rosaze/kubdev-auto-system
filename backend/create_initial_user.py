@@ -16,9 +16,11 @@ def create_initial_users():
                 name="Admin",
                 hashed_password="ADMIN",
                 role=UserRole.ADMIN,
-                is_active=True
+                is_active=True,
+                created_by=None
             )
             db.add(admin_user)
+            db.flush()  # admin_user.id를 얻기 위해 flush, test_user 생성 시 필요
             print("✅ Admin 생성: 접속 코드 'ADMIN'")
         else:
             print("ℹ️  Admin 이미 존재")
@@ -30,7 +32,8 @@ def create_initial_users():
                 name="Test User",
                 hashed_password="USER1",
                 role=UserRole.USER,
-                is_active=True
+                is_active=True,
+                created_by=admin_user.id  # Admin이 생성
             )
             db.add(user)
             print("✅ Test User 생성: 접속 코드 'USER1'")

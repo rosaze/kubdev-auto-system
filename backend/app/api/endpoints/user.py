@@ -21,7 +21,7 @@ from app.schemas.user import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users")
 
 
 @router.post("/admin", response_model=UserCreateAdminResponse, status_code=status.HTTP_201_CREATED)
@@ -31,7 +31,7 @@ async def create_admin_user(
     current_user: User = Depends(get_current_active_user)
 ) -> UserCreateAdminResponse:
     """
-    관리자 사용자 생성
+    사용자 생성 - 관계자
     """
     logger.info(f"Creating admin user: {user_data.name} by user {user_data.current_user_id}")
     
@@ -103,7 +103,7 @@ async def create_regular_user(
     current_user: User = Depends(get_current_active_user)
 ) -> UserCreateUserResponse:
     """
-    일반 사용자 생성 (환경 자동 생성 포함)
+    사용자 생성 - 일반 사용자 (환경 자동 생성 포함)
     """
     logger.info(f"Creating regular user: {user_data.name} by user {user_data.current_user_id}")
     

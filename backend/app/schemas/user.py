@@ -21,7 +21,7 @@ class UserCreateAdmin(BaseModel):
     """사용자 생성 스키마 (관계자)"""
     name: str = Field(..., min_length=1, max_length=255)
     current_user_id: int = Field(..., description="현재 로그인한 사용자 ID")
-    # role은 ADMIN으로 고정
+    role: UserRole = Field(default=UserRole.ADMIN, description="사용자 역할")
     # hashed_password(접속 코드)는 서버에서 자동 생성
 
 class UserCreateAdminResponse(BaseModel):
@@ -41,7 +41,7 @@ class UserCreateUser(BaseModel):
     """사용자 생성 스키마 (일반 사용자)"""
     name: str = Field(..., min_length=1, max_length=255)
     current_user_id: int = Field(..., description="현재 로그인한 사용자 ID")
-    # role은 USER로 고정
+    role: UserRole = Field(default=UserRole.USER, description="사용자 역할")
     # hashed_password(접속 코드)는 서버에서 자동 생성
 
 class UserCreateUserResponse(BaseModel):
