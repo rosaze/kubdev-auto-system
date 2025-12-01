@@ -28,6 +28,7 @@ class User(Base):
     # 권한 관리
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=True)  # 생성자 ID (관리자가 생성한 경우)
 
     # 타임스탬프
     created_at = Column(DateTime(timezone=True), server_default=func.now())
