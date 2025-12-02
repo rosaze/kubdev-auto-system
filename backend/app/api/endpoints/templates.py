@@ -3,9 +3,9 @@ Template API Endpoints
 프로젝트 템플릿 관리 API
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
 import time
 from datetime import datetime
@@ -498,6 +498,338 @@ async def get_template_usage_stats(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get usage stats: {str(e)}")
+
+
+# =====================================
+# 🚀 YAML 업로드 → 템플릿 생성 (통합 API)
+# =====================================
+
+@router.post("/create-from-yaml", response_model=ProjectTemplateResponse)
+async def create_template_from_yaml(
+    template_name: str = Form(..., description="Template name"),
+    yaml_file: UploadFile = File(..., description="YAML file to upload"),
+    git_repository: Optional[str] = Form(None, description="Git repository URL (optional)"),
+    description: Optional[str] = Form("YAML로 생성된 템플릿", description="Template description"),
+    organization_id: int = Form(1, description="Organization ID"),
+    created_by: int = Form(..., description="Creator user ID"),
+    db: Session = Depends(get_db)
+):
+    """YAML 파일로부터 직접 템플릿 생성 - 업로드부터 저장까지 한 번에!"""
+
+    try:
+        import yaml
+
+        # 1. 생성자 확인
+        creator = db.query(User).filter(User.id == created_by).first()
+        if not creator:
+            raise HTTPException(status_code=404, detail="Creator user not found")
+
+        # 2. 파일 확장자 확인
+        if not yaml_file.filename.lower().endswith(('.yaml', '.yml')):
+            raise HTTPException(status_code=400, detail="Invalid file type. Only .yaml or .yml files are accepted.")
+
+        # 3. YAML 파일 읽기 및 파싱 (다중 인코딩 지원)
+        try:
+            yaml_content = await yaml_file.read()
+
+            # 여러 인코딩 시도
+            encodings = ['utf-8', 'utf-8-sig', 'cp949', 'euc-kr', 'latin-1']
+            yaml_text = None
+            used_encoding = None
+
+            for encoding in encodings:
+                try:
+                    yaml_text = yaml_content.decode(encoding)
+                    used_encoding = encoding
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if yaml_text is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not decode file. Please save as UTF-8 encoding."
+                )
+
+            parsed_yaml = yaml.safe_load(yaml_text)
+            if not parsed_yaml:
+                raise HTTPException(status_code=400, detail="Invalid YAML format or empty file")
+
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"YAML parsing error: {str(e)}")
+
+        # 3. Git 정보 추출
+        git_info = {}
+        if git_repository:
+            git_info = {"repository_url": git_repository, "branch": "main"}
+        elif "github" in parsed_yaml:
+            github_config = parsed_yaml["github"]
+            if isinstance(github_config, str):
+                git_info["repository_url"] = f"https://github.com/{github_config}"
+        elif "git" in parsed_yaml:
+            git_config = parsed_yaml["git"]
+            if isinstance(git_config, dict):
+                git_info["repository_url"] = git_config.get("repository", git_config.get("repo"))
+                git_info["branch"] = git_config.get("branch", git_config.get("ref", "main"))
+
+        # 4. Gitpod 설정 자동 파싱 (GitHub에서 .gitpod.yml 가져오기)
+        if git_info.get("repository_url"):
+            gitpod_config = await parse_gitpod_yaml_from_repo(git_info["repository_url"])
+            if gitpod_config:
+                for key, value in gitpod_config.items():
+                    if key not in parsed_yaml:
+                        parsed_yaml[key] = value
+
+        # 5. 환경 설정 생성
+        environment_config = extract_environment_config(parsed_yaml, git_info)
+
+        # 6. 템플릿 중복 확인
+        existing = db.query(ProjectTemplate).filter(
+            ProjectTemplate.name == template_name,
+            ProjectTemplate.organization_id == organization_id
+        ).first()
+
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{template_name}' already exists"
+            )
+
+        # 7. 템플릿 생성 및 저장
+        template = ProjectTemplate(
+            name=template_name,
+            description=description,
+            version="1.0.0",
+            status=TemplateStatus.ACTIVE,  # 바로 활성화
+            stack_config=parsed_yaml,
+            base_image=environment_config.get("base_image", "codercom/code-server:latest"),
+            init_scripts=environment_config.get("init_scripts", []),
+            post_start_commands=environment_config.get("post_start_commands", []),
+            resource_limits={
+                "cpu": "1000m",
+                "memory": "2Gi",
+                "storage": "10Gi"
+            },
+            exposed_ports=environment_config.get("exposed_ports", [8080]),
+            environment_variables=environment_config.get("environment_variables", {}),
+            default_git_repo=environment_config.get("git_repository"),
+            git_branch=environment_config.get("git_branch", "main"),
+            is_public=False,
+            organization_id=organization_id,
+            created_by=created_by
+        )
+
+        db.add(template)
+        db.commit()
+        db.refresh(template)
+
+        return template
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Template creation failed: {str(e)}")
+
+
+# =====================================
+# 🚀 Git 리포지토리 파싱 API
+# =====================================
+
+@router.post("/parse-yaml")
+async def parse_yaml_with_git_info(
+    yaml_content: str = Query(..., description="YAML content to parse"),
+    git_repository: Optional[str] = Query(None, description="Git repository URL")
+):
+    """YAML 내용 파싱 및 Git 리포지토리 정보 추출"""
+
+    try:
+        import yaml
+
+        # YAML 파싱
+        parsed_yaml = yaml.safe_load(yaml_content)
+        if not parsed_yaml:
+            raise HTTPException(status_code=400, detail="Invalid YAML format")
+
+        # Git 리포지토리 정보 추출
+        git_info = {}
+
+        # 1. 직접 전달된 git_repository 사용
+        if git_repository:
+            git_info = {
+                "repository_url": git_repository,
+                "branch": "main"
+            }
+
+        # 2. YAML 내에서 Git 정보 추출 (Gitpod 형식 지원)
+        elif "github" in parsed_yaml:
+            github_config = parsed_yaml["github"]
+            if isinstance(github_config, str):
+                git_info["repository_url"] = f"https://github.com/{github_config}"
+            elif isinstance(github_config, dict) and "repository" in github_config:
+                git_info["repository_url"] = github_config["repository"]
+
+        elif "git" in parsed_yaml:
+            git_config = parsed_yaml["git"]
+            if isinstance(git_config, dict):
+                git_info["repository_url"] = git_config.get("repository", git_config.get("repo"))
+                git_info["branch"] = git_config.get("branch", git_config.get("ref", "main"))
+
+        # 3. 리포지토리 URL이 .gitpod.yml 등을 가리키는 경우 파싱
+        if git_info.get("repository_url"):
+            gitpod_config = await parse_gitpod_yaml_from_repo(git_info["repository_url"])
+            if gitpod_config:
+                # Gitpod 설정과 병합
+                for key, value in gitpod_config.items():
+                    if key not in parsed_yaml:
+                        parsed_yaml[key] = value
+
+        # 환경 설정 정보 추출
+        environment_config = extract_environment_config(parsed_yaml, git_info)
+
+        return {
+            "git_info": git_info,
+            "environment_config": environment_config,
+            "parsed_yaml": parsed_yaml,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"YAML parsing error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parsing failed: {str(e)}")
+
+
+async def parse_gitpod_yaml_from_repo(repo_url: str) -> dict[str, Any]:
+    """Git 리포지토리에서 .gitpod.yml 파싱"""
+    try:
+        import httpx
+        import yaml
+
+        # URL 정규화
+        if repo_url.endswith('.git'):
+            raw_base = repo_url[:-4]
+        else:
+            raw_base = repo_url
+
+        # GitHub Raw URL 생성
+        if 'github.com' in raw_base:
+            parts = raw_base.split('github.com/')[-1]
+            raw_url = f"https://raw.githubusercontent.com/{parts}/HEAD/.gitpod.yml"
+        elif 'gitlab.com' in raw_base:
+            parts = raw_base.split('gitlab.com/')[-1]
+            raw_url = f"https://gitlab.com/{parts}/-/raw/HEAD/.gitpod.yml"
+        else:
+            return {}
+
+        # .gitpod.yml 다운로드 및 파싱
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(raw_url)
+
+        if response.status_code != 200:
+            return {}
+
+        gitpod_data = yaml.safe_load(response.text) or {}
+        return extract_gitpod_config(gitpod_data)
+
+    except Exception:
+        return {}
+
+
+def extract_gitpod_config(gitpod_data: dict[str, Any]) -> dict[str, Any]:
+    """Gitpod YAML에서 환경 설정 추출"""
+    config = {}
+
+    # Docker 이미지
+    if isinstance(gitpod_data.get('image'), str):
+        config['image'] = gitpod_data['image']
+
+    # 작업 명령어
+    tasks = gitpod_data.get('tasks')
+    if isinstance(tasks, list) and tasks:
+        commands = {}
+        for i, task in enumerate(tasks):
+            if isinstance(task, dict):
+                if task.get('init'):
+                    commands[f'init_{i}' if i > 0 else 'init'] = task['init']
+                if task.get('command'):
+                    commands[f'command_{i}' if i > 0 else 'start'] = task['command']
+                if task.get('before'):
+                    commands[f'before_{i}' if i > 0 else 'before'] = task['before']
+        if commands:
+            config['commands'] = commands
+
+    # 포트 설정
+    ports = gitpod_data.get('ports')
+    if isinstance(ports, list):
+        parsed_ports = []
+        for port in ports:
+            if isinstance(port, int):
+                parsed_ports.append(port)
+            elif isinstance(port, dict) and isinstance(port.get('port'), int):
+                parsed_ports.append(port['port'])
+        if parsed_ports:
+            config['ports'] = parsed_ports
+
+    # VSCode 확장
+    vscode_config = gitpod_data.get('vscode')
+    if isinstance(vscode_config, dict):
+        extensions = vscode_config.get('extensions')
+        if isinstance(extensions, list):
+            config['vscode_extensions'] = extensions
+
+    return config
+
+
+def extract_environment_config(parsed_yaml: dict[str, Any], git_info: dict[str, Any]) -> dict[str, Any]:
+    """YAML과 Git 정보로부터 환경 설정 추출"""
+    config = {
+        "base_image": parsed_yaml.get("image", "codercom/code-server:latest"),
+        "exposed_ports": parsed_yaml.get("ports", [8080]),
+        "environment_variables": parsed_yaml.get("env", {}),
+        "git_repository": git_info.get("repository_url"),
+        "git_branch": git_info.get("branch", "main")
+    }
+
+    # 명령어 처리
+    commands = parsed_yaml.get("commands", {})
+    if commands:
+        config["init_scripts"] = []
+        config["post_start_commands"] = []
+
+        if commands.get("init"):
+            config["init_scripts"].append(commands["init"])
+        if commands.get("before"):
+            config["init_scripts"].insert(0, commands["before"])
+        if commands.get("start") or commands.get("command"):
+            config["post_start_commands"].append(commands.get("start") or commands.get("command"))
+
+    # VSCode 확장을 환경변수로 설정
+    if parsed_yaml.get("vscode_extensions"):
+        config["environment_variables"]["VSCODE_EXTENSIONS"] = ",".join(parsed_yaml["vscode_extensions"])
+
+    # Git 클론 명령어 자동 추가
+    if config.get("git_repository"):
+        git_clone_script = f"""
+# Git 리포지토리 자동 클론
+if [ ! -d "/workspace/.git" ]; then
+    echo "📥 Git 리포지토리 클론 중..."
+    git clone {config["git_repository"]} /workspace/project
+    cd /workspace/project
+    git checkout {config["git_branch"]}
+    echo "✅ Git 리포지토리 클론 완료"
+fi
+"""
+        config.setdefault("init_scripts", []).insert(0, git_clone_script)
+
+        # Git 설정 추가
+        config["environment_variables"].update({
+            "GIT_REPO": config["git_repository"],
+            "GIT_BRANCH": config["git_branch"],
+            "WORKSPACE": "/workspace/project"
+        })
+
+    return config
 
 
 # =====================================

@@ -19,6 +19,7 @@ engine = create_engine(
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,  # 연결 검증
     echo=settings.DEBUG,  # SQL 쿼리 로깅 (개발 환경에서만)
+    connect_args={"client_encoding": "utf8"},  # 인코딩 강제
 )
 
 # SessionLocal 클래스 생성

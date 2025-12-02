@@ -1,0 +1,63 @@
+# This is a KubeDevEnvironment Custom Resource (CR) file.
+# Upload this file to POST /api/v1/templates/create-from-yaml endpoint to create an environment.
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  # Unique name for this environment instance
+  name: my-python-project-env
+  # Namespace where this CR will be created
+  namespace: kubdev-users
+spec:
+  # userName will be injected/overwritten by the backend based on the authenticated user.
+  # userName: "jiwon" 
+  
+  # Git repository URL to clone into the environment
+  gitRepository: "https://github.com/google/python-sample-template.git"
+  
+  # 'template' field contains the full Deployment specification for the controller to use.
+  template:
+    apiVersion: apps/v1
+    kind: Deployment
+    spec:
+      replicas: 1
+      template:
+        spec:
+          initContainers:
+            - name: git-clone
+              image: alpine/git
+              args:
+                - clone
+                - --single-branch
+                # The controller should use the gitRepository from the outer spec
+                - "https://github.com/google/python-sample-template.git"
+                - /workspace
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+          containers:
+            - name: web-ide-container
+              image: codercom/code-server:latest
+              args:
+                - "--auth"
+                - "none"
+                - "--bind-addr"
+                - "0.0.0.0:8080"
+                - "/workspace"
+              ports:
+                - containerPort: 8080
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "1"
+                  memory: "2Gi"
+          volumes:
+            - name: workspace-storage
+              # PVC will be dynamically created and managed by the controller.
+              # Leave it empty or use a placeholder here.
+              persistentVolumeClaim:
+                claimName: 'placeholder-pvc-name'
