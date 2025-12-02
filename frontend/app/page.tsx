@@ -5,37 +5,38 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { apiPost } from "@/lib/api"
+import { login } from "@/lib/api"
 
 export default function LoginPage() {
   const [code, setCode] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
   const router = useRouter()
-
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   const handleLogin = async (type: "admin" | "user") => {
     if (!code.trim()) return
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await apiPost<{
-        access_token: string
-        token_type: string
-        user: any
-      }>("/auth/login", { access_code: code.trim().toUpperCase() })
 
-      // Store token and basic user info
-      localStorage.setItem("accessToken", res.access_token)
-      localStorage.setItem("tokenType", res.token_type)
-      localStorage.setItem("accessCode", code.trim().toUpperCase())
-      localStorage.setItem("currentUser", JSON.stringify(res.user))
+    setIsLoading(true)
+    setError("")
 
-      router.push(`/${type}`)
-    } catch (e: any) {
-      setError(e?.message || "로그인에 실패했습니다")
-    } finally {
-      setLoading(false)
+    const result = await login(code.trim())
+
+    if (result.success && result.data) {
+      // 로그인 성공 - localStorage에 정보 저장
+      localStorage.setItem("accessCode", code)
+      localStorage.setItem("userId", result.data.user_id)
+      localStorage.setItem("userType", result.data.user_type)
+
+      // user_type에 따라 라우팅
+      if (result.data.user_type === "admin") {
+        router.push("/admin")
+      } else {
+        router.push("/user")
+      }
+    } else {
+      // 로그인 실패
+      setError(result.error || "로그인에 실패했습니다")
+      setIsLoading(false)
     }
   }
 
@@ -74,29 +75,30 @@ export default function LoginPage() {
               onChange={(e) => setCode(e.target.value)}
               className="h-12"
               onKeyDown={(e) => {
-                if (e.key === "Enter" && code.trim()) {
+                if (e.key === "Enter" && code.trim() && !isLoading) {
                   handleLogin("admin")
                 }
               }}
+              disabled={isLoading}
             />
-            {error && <p className="text-sm text-red-500">{error}</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
 
           <div className="space-y-3">
             <Button
               onClick={() => handleLogin("admin")}
-              disabled={!code.trim()}
+              disabled={!code.trim() || isLoading}
               className="w-full h-12 text-base font-medium"
             >
-              {loading ? "로그인 중..." : "관계자로 로그인"}
+              {isLoading ? "로그인 중..." : "관계자로 로그인"}
             </Button>
             <Button
               onClick={() => handleLogin("user")}
-              disabled={!code.trim()}
+              disabled={!code.trim() || isLoading}
               variant="outline"
               className="w-full h-12 text-base font-medium"
             >
-              {loading ? "로그인 중..." : "사용자로 로그인"}
+              {isLoading ? "로그인 중..." : "사용자로 로그인"}
             </Button>
           </div>
         </CardContent>
