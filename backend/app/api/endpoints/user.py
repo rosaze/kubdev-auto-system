@@ -12,16 +12,19 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
 from app.core.security import generate_access_code
 from app.models.user import User, UserRole
+from app.models.project_template import ProjectTemplate, TemplateStatus
+from app.models.environment import EnvironmentInstance, EnvironmentStatus
 from app.schemas.user import (
     UserCreateAdmin,
     UserCreateAdminResponse,
     UserCreateUser,
     UserCreateUserResponse,
 )
+from app.services.kubernetes_service import KubernetesService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/users")
+router = APIRouter()
 
 
 @router.post("/admin", response_model=UserCreateAdminResponse, status_code=status.HTTP_201_CREATED)
@@ -150,16 +153,105 @@ async def create_regular_user(
         
         logger.info(f"User created successfully: ID={new_user.id}, access_code={access_code}")
         
-        # TODO: 실제 환경 생성 로직 구현 필요
-        # 더미 데이터 반환
-        dummy_environment = UserCreateUserResponse.EnvironmentData(
-            id=0,
-            template_id=1,
+        # 현재 로그인한 사용자가 생성한 템플릿 조회
+        template = db.query(ProjectTemplate).filter(
+            ProjectTemplate.created_by == user_data.current_user_id,
+            ProjectTemplate.status == TemplateStatus.ACTIVE
+        ).first()
+        
+        if not template:
+            logger.error(f"No active template found for user {user_data.current_user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No active template found for current user"
+            )
+        
+        logger.info(f"Using template: ID={template.id}, name={template.name}")
+        
+        # Environment 생성
+        k8s_namespace = f"user-{new_user.id}"
+        k8s_deployment_name = f"env-{new_user.id}-{template.id}"
+        
+        new_environment = EnvironmentInstance(
+            name=f"{new_user.name}'s Environment",
+            template_id=template.id,
             user_id=new_user.id,
-            status="pending",
-            port=8080,
-            cpu=1,
-            memory=512
+            k8s_namespace=k8s_namespace,
+            k8s_deployment_name=k8s_deployment_name,
+            k8s_service_name=f"svc-{new_user.id}",
+            status=EnvironmentStatus.PENDING,
+            environment_config=template.environment_variables or {},
+            port_mappings=template.exposed_ports or [],
+            auto_stop_enabled=True
+        )
+        
+        db.add(new_environment)
+        db.commit()
+        db.refresh(new_environment)
+        
+        logger.info(f"Environment created successfully: ID={new_environment.id}, namespace={k8s_namespace}")
+        
+        # 실제 Kubernetes 리소스 생성
+        k8s_service = KubernetesService()
+        try:
+            # 1. Namespace 생성
+            await k8s_service.create_namespace(k8s_namespace)
+            
+            # 2. Deployment 생성
+            resource_limits = {
+                "limits": {
+                    "cpu": template.resource_limits.get("cpu", "1000m"),
+                    "memory": template.resource_limits.get("memory", "2Gi")
+                },
+                "requests": {
+                    "cpu": template.resource_limits.get("cpu", "1000m"),
+                    "memory": template.resource_limits.get("memory", "2Gi")
+                }
+            }
+            
+            await k8s_service.create_deployment(
+                namespace=k8s_namespace,
+                deployment_name=k8s_deployment_name,
+                image=template.base_image,
+                environment_vars=template.environment_variables or {},
+                resource_limits=resource_limits
+            )
+            
+            # 3. Service 생성
+            service_port = template.exposed_ports[0] if template.exposed_ports else 8080
+            await k8s_service.create_service(
+                namespace=k8s_namespace,
+                service_name=f"svc-{new_user.id}",
+                deployment_name=k8s_deployment_name,
+                port=service_port
+            )
+            
+            # 4. Environment 상태 업데이트
+            new_environment.status = EnvironmentStatus.CREATING
+            new_environment.external_port = service_port
+            new_environment.access_url = f"http://{k8s_namespace}.local:{service_port}"
+            db.commit()
+            db.refresh(new_environment)
+            
+            logger.info(f"Kubernetes resources created for environment {new_environment.id}")
+            
+        except Exception as k8s_error:
+            logger.error(f"Failed to create Kubernetes resources: {str(k8s_error)}")
+            # K8s 리소스 생성 실패 시 환경 상태를 ERROR로 업데이트
+            new_environment.status = EnvironmentStatus.ERROR
+            new_environment.status_message = f"K8s creation failed: {str(k8s_error)}"
+            db.commit()
+            db.refresh(new_environment)
+        
+        # 응답 데이터 구성
+        environment_data = UserCreateUserResponse.EnvironmentData(
+            id=new_environment.id,
+            template_id=template.id,
+            user_id=new_user.id,
+            status=new_environment.status.value,
+            port=new_environment.external_port or 0,
+            cpu=int(template.resource_limits.get("cpu", "1000m").replace("m", "")) if template.resource_limits else 1000,
+            memory=int(template.resource_limits.get("memory", "2Gi").replace("Gi", "")) * 1024 if template.resource_limits else 2048
         )
         
         user_info = UserCreateUserResponse.UserData(
@@ -173,7 +265,7 @@ async def create_regular_user(
         
         return UserCreateUserResponse(
             user=user_info,
-            environment=dummy_environment
+            environment=environment_data
         )
     
     except Exception as e:
