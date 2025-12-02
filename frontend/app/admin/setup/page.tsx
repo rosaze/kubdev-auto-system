@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { uploadYaml } from "@/lib/api"
 
 const DUMMY_TOOLS = [
   { name: "VS Code", version: "1.85.0", status: "active" },
@@ -20,6 +21,8 @@ export default function AdminSetupPage() {
   const [mounted, setMounted] = useState(false)
   const [environmentFile, setEnvironmentFile] = useState<File | null>(null)
   const [isEnvironmentSet, setIsEnvironmentSet] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadError, setUploadError] = useState("")
 
   useEffect(() => {
     setMounted(true)
@@ -36,16 +39,38 @@ export default function AdminSetupPage() {
     }
   }, [router])
 
-  const handleEnvironmentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEnvironmentFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setEnvironmentFile(e.target.files[0])
-      setIsEnvironmentSet(true)
-      localStorage.setItem("environmentSet", "true")
+      const file = e.target.files[0]
+      setEnvironmentFile(file)
+      setIsUploading(true)
+      setUploadError("")
+
+      const userId = localStorage.getItem("userId")
+      if (!userId) {
+        setUploadError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
+        setIsUploading(false)
+        return
+      }
+
+      const result = await uploadYaml(userId, file)
+
+      if (result.success) {
+        setIsEnvironmentSet(true)
+        localStorage.setItem("environmentSet", "true")
+      } else {
+        setUploadError(result.error || "업로드에 실패했습니다")
+        setEnvironmentFile(null)
+      }
+
+      setIsUploading(false)
     }
   }
 
   const handleLogout = () => {
     localStorage.removeItem("accessCode")
+    localStorage.removeItem("userId")
+    localStorage.removeItem("userType")
     localStorage.removeItem("environmentSet")
     router.push("/")
   }
@@ -87,8 +112,9 @@ export default function AdminSetupPage() {
                   onChange={handleEnvironmentFileChange}
                   className="hidden"
                   id="environment-file-upload"
+                  disabled={isUploading}
                 />
-                <label htmlFor="environment-file-upload" className="cursor-pointer">
+                <label htmlFor="environment-file-upload" className={isUploading ? "cursor-wait" : "cursor-pointer"}>
                   <div className="flex flex-col items-center gap-2">
                     <svg
                       className="w-12 h-12 text-muted-foreground"
@@ -104,14 +130,27 @@ export default function AdminSetupPage() {
                       />
                     </svg>
                     <div>
-                      <p className="font-medium">클릭하여 YAML 파일 선택</p>
+                      <p className="font-medium">{isUploading ? "업로드 중..." : "클릭하여 YAML 파일 선택"}</p>
                       <p className="text-sm text-muted-foreground">.yaml 또는 .yml 파일</p>
                     </div>
                   </div>
                 </label>
               </div>
 
-              {environmentFile && (
+              {uploadError && (
+                <div className="flex items-center gap-2 p-3 bg-destructive/10 text-destructive rounded-lg">
+                  <svg className="w-5 h-5" fill="none" strokeWidth="2" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                    />
+                  </svg>
+                  <span className="text-sm">{uploadError}</span>
+                </div>
+              )}
+
+              {environmentFile && !uploadError && (
                 <div className="flex items-center gap-2 p-3 bg-secondary rounded-lg">
                   <svg
                     className="w-5 h-5 text-primary"
