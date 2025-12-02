@@ -30,9 +30,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      - KUBEDEV_MOCK=0
-    ports:
-      - "8000:8000"
     volumes:
       - ${HOME}/.kube:/root/.kube:ro
     extra_hosts:
