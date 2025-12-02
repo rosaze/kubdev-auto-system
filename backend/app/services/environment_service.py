@@ -233,9 +233,9 @@ class EnvironmentService:
             raise
 
     async def stop_environment(self, environment_id: int) -> Dict[str, Any]:
-        """환경 중지"""
+        """환경 중지 - Deployment를 0으로 스케일 다운"""
         log = self.log.bind(environment_id=environment_id)
-        log.info("Stopping environment")
+        log.info("Stopping environment by scaling down to 0")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
@@ -245,18 +245,19 @@ class EnvironmentService:
             raise Exception("Environment not found")
 
         try:
-            log.info("Deleting deployment to stop environment", deployment_name=environment.k8s_deployment_name)
-            await self.k8s_service.delete_deployment(
+            log.info("Scaling deployment to 0 to stop environment", deployment_name=environment.k8s_deployment_name)
+            await self.k8s_service.scale_deployment(
                 namespace=environment.k8s_namespace,
-                deployment_name=environment.k8s_deployment_name
+                deployment_name=environment.k8s_deployment_name,
+                replicas=0
             )
 
             environment.status = EnvironmentStatus.STOPPED
             environment.stopped_at = datetime.utcnow()
-            environment.status_message = "Environment stopped"
+            environment.status_message = "Environment stopped - scaled down to 0"
             self.db.commit()
             log.info("Environment stopped successfully")
-            return {"message": "Environment stopped successfully"}
+            return {"message": "Environment stopped successfully - scaled down to 0"}
 
         except Exception as e:
             log.error("Failed to stop environment", error=str(e), exc_info=True)
@@ -266,20 +267,54 @@ class EnvironmentService:
             raise
 
     async def restart_environment(self, environment_id: int) -> Dict[str, Any]:
-        """환경 재시작"""
+        """환경 재시작 - Deployment 스케일 다운 후 스케일 업으로 Pod 재생성"""
         log = self.log.bind(environment_id=environment_id)
         log.info("Restarting environment")
-        await self.stop_environment(environment_id)
-        log.info("Waiting for environment to stop before restarting")
-        await asyncio.sleep(10)
-        await self.start_environment(environment_id)
-        log.info("Environment restarted successfully")
-        return {"message": "Environment restarted successfully"}
+        environment = self.db.query(EnvironmentInstance).filter(
+            EnvironmentInstance.id == environment_id
+        ).first()
+
+        if not environment:
+            log.error("Restart failed: environment not found")
+            raise Exception("Environment not found")
+
+        try:
+            # 1단계: 0으로 스케일 다운
+            log.info("Scaling deployment to 0 for restart", deployment_name=environment.k8s_deployment_name)
+            await self.k8s_service.scale_deployment(
+                namespace=environment.k8s_namespace,
+                deployment_name=environment.k8s_deployment_name,
+                replicas=0
+            )
+
+            # 짧은 대기 (Pod 종료 시간)
+            await asyncio.sleep(5)
+
+            # 2단계: 1로 스케일 업 (Pod 재생성 및 PVC 재마운트)
+            log.info("Scaling deployment to 1 for restart", deployment_name=environment.k8s_deployment_name)
+            await self.k8s_service.scale_deployment(
+                namespace=environment.k8s_namespace,
+                deployment_name=environment.k8s_deployment_name,
+                replicas=1
+            )
+
+            environment.status = EnvironmentStatus.RUNNING
+            environment.status_message = "Environment restarted successfully"
+            self.db.commit()
+            log.info("Environment restarted successfully")
+            return {"message": "Environment restarted successfully - Pod recreated with PVC remount"}
+
+        except Exception as e:
+            log.error("Failed to restart environment", error=str(e), exc_info=True)
+            environment.status = EnvironmentStatus.ERROR
+            environment.status_message = f"Failed to restart: {str(e)}"
+            self.db.commit()
+            raise
 
     async def delete_environment(self, environment_id: int) -> Dict[str, Any]:
-        """환경 완전 삭제"""
+        """환경 완전 삭제 - Namespace 전체 삭제로 모든 리소스 회수"""
         log = self.log.bind(environment_id=environment_id)
-        log.info("Deleting environment permanently")
+        log.info("Deleting environment permanently - deleting entire namespace")
         environment = self.db.query(EnvironmentInstance).filter(
             EnvironmentInstance.id == environment_id
         ).first()
@@ -289,24 +324,16 @@ class EnvironmentService:
             raise Exception("Environment not found")
 
         try:
-            log.info("Deleting K8s deployment", deployment_name=environment.k8s_deployment_name)
-            await self.k8s_service.delete_deployment(
-                namespace=environment.k8s_namespace,
-                deployment_name=environment.k8s_deployment_.name
-            )
+            # 네임스페이스 전체 삭제 (모든 리소스 자동 정리)
+            log.info("Deleting entire namespace to clean up all resources", namespace=environment.k8s_namespace)
+            await self.k8s_service.delete_namespace(environment.k8s_namespace)
 
-            if environment.k8s_service_name:
-                log.info("Deleting K8s service", service_name=environment.k8s_service_name)
-                await self.k8s_service.delete_service(
-                    namespace=environment.k8s_namespace,
-                    service_name=environment.k8s_service_name
-                )
-
+            # 데이터베이스에서 환경 기록 삭제
             log.info("Deleting environment from database")
             self.db.delete(environment)
             self.db.commit()
             log.info("Environment deleted successfully")
-            return {"message": "Environment deleted successfully"}
+            return {"message": "Environment deleted successfully - namespace and all resources removed"}
 
         except Exception as e:
             log.error("Failed to delete environment", error=str(e), exc_info=True)
