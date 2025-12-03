@@ -20,9 +20,8 @@ security = HTTPBearer(auto_error=False)
 
 # 개발용 고정 API 키 (실제 운영에서는 사용 금지)
 DEV_API_KEYS = {
-    "admin-key-123": {"role": "super_admin", "user_id": 1, "access_code": "ADMIN"},
-    "dev-key-456": {"role": "developer", "user_id": 2, "access_code": "DEV01"},
-    "test-key-789": {"role": "org_admin", "user_id": 3, "access_code": "TEST1"}
+    "admin-key-123": {"role": "admin", "user_id": 1, "access_code": "ADMIN"},
+    "user-key-456": {"role": "user", "user_id": 2, "access_code": "USER1"}
 }
 
 
@@ -64,7 +63,7 @@ def authenticate_user(db: Session, access_code: str) -> Optional[User]:
 def create_user_token(user: User) -> Dict[str, Any]:
     """사용자용 간단한 토큰 생성 (JWT 대신 간단한 키 사용)"""
     # 개발용: 접속 코드를 기반으로 간단한 토큰 생성
-    simple_token = f"user-{user.id}-{user.hashed_password}"
+    simple_token = f"{user.id}-{user.hashed_password}"
 
     return {
         "access_token": simple_token,
@@ -98,22 +97,22 @@ def get_current_user_simple(
             role=user_data["role"]
         )
 
-    # 간단한 사용자 토큰 확인 (user-{id}-{name} 형식)
-    if token.startswith("user-"):
-        try:
-            parts = token.split("-")
-            user_id = int(parts[1])
+    # 간단한 사용자 토큰 확인 ({id}-{access_code} 형식)
+    try:
+        parts = token.split("-")
+        if len(parts) >= 2:
+            user_id = int(parts[0])
             user = db.query(User).filter(User.id == user_id).first()
             if user:
                 return user
-        except (ValueError, IndexError):
-            pass
+    except (ValueError, IndexError):
+        pass
 
     # 인증 실패시에도 기본 사용자 반환 (개발용)
     return create_dev_user()
 
 
-def create_dev_user(user_id: int = 1, access_code: str = "ADMIN", role: str = "super_admin") -> User:
+def create_dev_user(user_id: int = 1, access_code: str = "ADMIN", role: str = "admin") -> User:
     """개발용 임시 사용자 객체 생성"""
     from app.models.user import UserRole
 
@@ -123,11 +122,8 @@ def create_dev_user(user_id: int = 1, access_code: str = "ADMIN", role: str = "s
             self.id = user_id
             self.hashed_password = access_code  # 접속 코드
             self.name = "Development User"
-            self.role = getattr(UserRole, role.upper(), UserRole.DEVELOPER)
+            self.role = getattr(UserRole, role.upper(), UserRole.USER)
             self.is_active = True
-            self.is_verified = True
-            self.organization_id = 1
-            self.team_id = None
             self.created_at = datetime.utcnow()
             self.environments = []
 
@@ -153,21 +149,7 @@ def get_admin_user(
     return current_user
 
 
-def get_super_admin(
-    current_user: User = Depends(get_current_user)
-) -> User:
-    """슈퍼 관리자 권한 확인 - 개발용에서는 항상 허용"""
-    return current_user
-
-
-def get_team_leader(
-    current_user: User = Depends(get_current_user)
-) -> User:
-    """팀 리더 권한 확인 - 개발용에서는 항상 허용"""
-    return current_user
-
-
-def check_user_permissions(user: User, required_role: str = None, organization_id: int = None) -> bool:
+def check_user_permissions(user: User, required_role: str = None) -> bool:
     """사용자 권한 확인 - 개발용에서는 항상 허용"""
     return True
 
@@ -194,13 +176,9 @@ def mask_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # 개발용 편의 함수들
-def get_dev_token(role: str = "super_admin") -> str:
+def get_dev_token(role: str = "admin") -> str:
     """개발용 토큰 빠른 생성"""
-    if role == "super_admin":
+    if role == "admin":
         return "admin-key-123"
-    elif role == "developer":
-        return "dev-key-456"
-    elif role == "org_admin":
-        return "test-key-789"
     else:
-        return "admin-key-123"
+        return "user-key-456"

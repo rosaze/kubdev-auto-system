@@ -3,61 +3,88 @@ User Schemas
 사용자 관련 Pydantic 스키마
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from app.models.user import UserRole
 
 
+
+
 class UserBase(BaseModel):
     """사용자 기본 스키마"""
     name: str = Field(..., min_length=1, max_length=255)
-    role: UserRole = UserRole.DEVELOPER
+    role: UserRole = UserRole.USER
 
 
-class UserCreate(BaseModel):
-    """사용자 생성 스키마 (관리자용)"""
+class UserCreateAdmin(BaseModel):
+    """사용자 생성 스키마 (관계자)"""
     name: str = Field(..., min_length=1, max_length=255)
-    role: UserRole = UserRole.DEVELOPER
-    organization_id: Optional[int] = None
-    team_id: Optional[int] = None
+    current_user_id: int = Field(..., description="현재 로그인한 사용자 ID")
+    role: UserRole = Field(default=UserRole.ADMIN, description="사용자 역할")
     # hashed_password(접속 코드)는 서버에서 자동 생성
 
-
-class UserUpdate(BaseModel):
-    """사용자 업데이트 스키마"""
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    role: Optional[UserRole] = None
-    is_active: Optional[bool] = None
-    organization_id: Optional[int] = None
-    team_id: Optional[int] = None
-
-
-class UserResponse(UserBase):
-    """사용자 응답 스키마"""
+class UserCreateAdminResponse(BaseModel):
+    """사용자 생성 응답 스키마 (관계자)"""
     id: int
-    hashed_password: str = Field(..., description="접속 코드")
+    name: str
+    role: UserRole
+    access_code: str
     is_active: bool
-    is_verified: bool
-    organization_id: Optional[int]
-    team_id: Optional[int]
     created_at: datetime
-    updated_at: Optional[datetime]
-    last_login_at: Optional[datetime]
 
     class Config:
         from_attributes = True
 
 
+class UserCreateUser(BaseModel):
+    """사용자 생성 스키마 (일반 사용자)"""
+    name: str = Field(..., min_length=1, max_length=255)
+    current_user_id: int = Field(..., description="현재 로그인한 사용자 ID")
+    role: UserRole = Field(default=UserRole.USER, description="사용자 역할")
+    # hashed_password(접속 코드)는 서버에서 자동 생성
+
+class UserCreateUserResponse(BaseModel):
+    """사용자 생성 응답 스키마 (일반 사용자)"""
+    class UserData(BaseModel):
+        id: int
+        name: str
+        role: UserRole
+        access_code: str
+        is_active: bool
+        created_at: datetime
+    
+    class EnvironmentData(BaseModel):
+        id: int
+        template_id: int
+        user_id: int
+        status: str
+        port: int
+        cpu: int
+        memory: int
+    
+    user: UserData
+    environment: EnvironmentData
+
+
 class UserLogin(BaseModel):
     """로그인 요청 스키마"""
-    access_code: str = Field(..., min_length=5, max_length=10, description="접속 코드")
+    access_code: str = Field(..., min_length=5, max_length=5, description="접속 코드")
+
+class UserLoginResponse(BaseModel):
+    """로그인 응답 스키마"""
+    class UserInfo(BaseModel):
+        id: int
+        name: str
+        role: UserRole
+        last_login: Optional[datetime]
+
+        class Config:
+            from_attributes = True
     
-    # 참고: access_code가 DB의 hashed_password와 매칭됨
+    user_info: UserInfo
 
 
-class UserTokenResponse(BaseModel):
-    """토큰 응답 스키마"""
-    access_token: str
-    token_type: str = "bearer"
-    user: UserResponse
+class UserLogout(BaseModel):
+    """로그아웃 요청 스키마"""
+    user_id: int = Field(..., description="로그아웃할 사용자 ID")
