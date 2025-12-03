@@ -23,14 +23,70 @@ class KubernetesService:
             except Exception:
                 config.load_incluster_config()
                 log.info("Loaded in-cluster config")
+
+            # For development: disable SSL verification to allow host.docker.internal
+            from kubernetes import client
+            conf = client.Configuration.get_default_copy()
+            conf.verify_ssl = False
+            client.Configuration.set_default(conf)
+            log.info("SSL certificate verification disabled for Kubernetes client.")
+
             self.k8s_available = True
             self.v1 = client.CoreV1Api()
             self.apps_v1 = client.AppsV1Api()
             self.networking_v1 = client.NetworkingV1Api()
+            self.custom_api = client.CustomObjectsApi()
             log.info("Kubernetes clients initialized successfully")
         except Exception as e:
             log.warning("Kubernetes config not available. Some features may not work.", error=str(e))
             self.k8s_available = False
+
+    async def create_custom_object(self, custom_object: Dict[str, Any]) -> Dict[str, Any]:
+        """KubeDevEnvironment CRD와 같은 사용자 정의 리소스를 생성합니다."""
+        self._check_k8s_availability()
+
+        api_version = custom_object.get("apiVersion")
+        if not api_version or "/" not in api_version:
+            raise ValueError("Invalid apiVersion in custom object")
+            
+        group, version = api_version.split('/')
+        kind = custom_object.get("kind")
+        namespace = custom_object.get("metadata", {}).get("namespace", "default")
+        
+        # CRD의 정확한 plural form을 사용해야 합니다. 'kubedevenvironments'
+        plural = "kubedevenvironments" if kind == "KubeDevEnvironment" else f"{kind.lower()}s"
+
+        log.info(
+            "Attempting to create custom object",
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=custom_object.get("metadata", {}).get("name")
+        )
+
+        try:
+            api_response = self.custom_api.create_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                body=custom_object,
+            )
+            log.info("Custom object created successfully")
+            return api_response
+        except ApiException as e:
+            log.error("Failed to create custom object", error=str(e), exc_info=True)
+            # 에러 메시지를 더 유용하게 만듭니다.
+            error_body = e.body
+            if hasattr(e, 'body'):
+                try:
+                    import json
+                    error_details = json.loads(e.body)
+                    error_body = error_details.get("message", e.body)
+                except (json.JSONDecodeError, AttributeError):
+                    pass # 파싱 실패 시 원본 body 사용
+            raise Exception(f"Failed to create custom object: {error_body}")
 
     def _check_k8s_availability(self):
         """K8s 연결 상태 확인"""
@@ -344,3 +400,82 @@ class KubernetesService:
                 return True
             log.error("Failed to delete namespace", namespace=namespace, error=str(e), exc_info=True)
             return False
+
+    async def create_custom_object(self, custom_object: Dict[str, Any]) -> Dict[str, Any]:
+        """KubeDevEnvironment와 같은 커스텀 리소스를 생성합니다."""
+        self._check_k8s_availability()
+
+        api_version = custom_object.get("apiVersion")
+        kind = custom_object.get("kind")
+        metadata = custom_object.get("metadata", {})
+        namespace = metadata.get("namespace", "default")
+        name = metadata.get("name")
+
+        log.info("Creating custom object", kind=kind, name=name, namespace=namespace)
+
+        if not all([api_version, kind, name]):
+            raise ValueError("Custom object must have apiVersion, kind, and metadata.name")
+
+        try:
+            group, version = api_version.split('/')
+
+            # 프로젝트의 CRD kind가 "KubeDevEnvironment"이므로, 복수형은 "kubedevenvironments" 입니다.
+            if kind == "KubeDevEnvironment":
+                plural = "kubedevenvironments"
+            else:
+                # 다른 종류의 CRD를 위한 간단한 복수형 추론 규칙
+                plural = f"{kind.lower()}s"
+
+            api_response = self.custom_api.create_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                body=custom_object,
+            )
+            log.info("Custom object created successfully", kind=kind, name=name)
+            return api_response
+        except ApiException as e:
+            # e.body는 bytes 타입일 수 있으므로, 안전하게 디코딩하여 실제 에러 메시지를 확인합니다.
+            error_body = e.body
+            if isinstance(error_body, bytes):
+                try:
+                    error_body = error_body.decode('utf-8')
+                except UnicodeDecodeError:
+                    error_body = error_body.decode('cp949', errors='ignore')
+
+            log.error("Failed to create custom object", kind=kind, name=name, error=error_body, exc_info=True)
+            raise Exception(f"Failed to create custom object: {error_body}")
+        except Exception as e:
+            log.error("An unexpected error occurred while creating custom object", kind=kind, name=name, error=str(e), exc_info=True)
+            raise e
+
+    async def get_custom_object(self, group: str, version: str, namespace: str, plural: str, name: str) -> Dict[str, Any]:
+        """KubeDevEnvironment CRD의 현재 상태를 조회합니다."""
+        self._check_k8s_availability()
+
+        log.info("Getting custom object", group=group, version=version, namespace=namespace, plural=plural, name=name)
+
+        try:
+            api_response = self.custom_api.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name
+            )
+            log.info("Custom object retrieved successfully", name=name)
+            return api_response
+        except ApiException as e:
+            error_body = e.body
+            if isinstance(error_body, bytes):
+                try:
+                    error_body = error_body.decode('utf-8')
+                except UnicodeDecodeError:
+                    error_body = error_body.decode('cp949', errors='ignore')
+
+            log.error("Failed to get custom object", name=name, error=error_body, exc_info=True)
+            raise Exception(f"Failed to get custom object: {error_body}")
+        except Exception as e:
+            log.error("An unexpected error occurred while getting custom object", name=name, error=str(e), exc_info=True)
+            raise e
