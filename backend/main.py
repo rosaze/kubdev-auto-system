@@ -1,26 +1,72 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import uvicorn
+import logging
+import traceback
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.core.database import check_database_connection, create_all_tables
-from app.api.routes import api_router
-from app.core.logging_config import setup_logging
-import logging
 
+# Setup logging first
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# 로깅 설정
-setup_logging()
+logger.info("="*80)
+logger.info("Starting KubeDev Backend Application")
+logger.info("="*80)
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Default encoding: {sys.getdefaultencoding()}")
+
+# Import app modules with detailed logging
+try:
+    logger.info("Setting up logging configuration...")
+    from app.core.logging_config import setup_logging
+    setup_logging()
+    logger.info("Logging configuration complete")
+except Exception as e:
+    logger.error(f"Failed to setup logging: {e}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+try:
+    logger.info("Importing settings...")
+    from app.core.config import settings
+    logger.info("Settings imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import settings: {e}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+    raise
+
+try:
+    logger.info("Importing database modules...")
+    from app.core.database import check_database_connection, create_all_tables
+    logger.info("Database modules imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import database modules: {e}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+    raise
+
+try:
+    logger.info("Importing API router...")
+    from app.api.routes import api_router
+    logger.info("API router imported successfully")
+except Exception as e:
+    logger.error(f"Failed to import API router: {e}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+    raise
 
 # 데이터베이스 테이블 생성 (개발 환경)
 try:
+    logger.info("Initializing database tables...")
     create_all_tables()
-    logger.info("Database tables initialized successfully")
+    logger.info("✅ Database tables initialized successfully")
 except Exception as e:
-    logger.warning(f"Failed to initialize tables: {e}")
+    logger.error(f"❌ Failed to initialize tables: {type(e).__name__}: {e}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
 
 # FastAPI 앱 인스턴스 생성
 app = FastAPI(
@@ -30,6 +76,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+
+
 
 # CORS 설정
 app.add_middleware(

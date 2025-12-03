@@ -24,15 +24,12 @@ export default function LoginPage() {
     if (result.success && result.data) {
       // 로그인 성공 - localStorage에 정보 저장
       localStorage.setItem("accessCode", code)
-      localStorage.setItem("userId", result.data.user_id)
+      localStorage.setItem("userId", result.data.user_id.toString())
       localStorage.setItem("userType", result.data.user_type)
+      localStorage.setItem("userName", result.data.name)
 
-      // user_type에 따라 라우팅
-      if (result.data.user_type === "admin") {
-        router.push("/admin")
-      } else {
-        router.push("/user")
-      }
+      const destination = result.data.user_type === "admin" ? "/admin" : "/user"
+      router.push(destination)
     } else {
       // 로그인 실패
       setError(result.error || "로그인에 실패했습니다")

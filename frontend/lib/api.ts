@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:8000"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1"
 
 // API 응답 타입 정의
 export interface ApiResponse<T = any> {
@@ -7,26 +7,60 @@ export interface ApiResponse<T = any> {
   error?: string
 }
 
+interface LoginApiResponse {
+  user_info: {
+    id: number
+    name: string
+    role: string
+    last_login?: string | null
+  }
+}
+
+export interface EnvironmentSummary {
+  id: number
+  user_id: number
+  name: string
+  status: string
+  k8s_namespace: string
+  access_url?: string | null
+  internal_ip?: string | null
+  external_port?: number | null
+  current_resource_usage?: {
+    cpu_usage?: number
+    memory_usage?: number
+    storage_usage?: number
+  }
+}
+
 // 1. 로그인
-export async function login(userCode: string): Promise<ApiResponse<{ user_type: string; user_id: string }>> {
+export async function login(
+  userCode: string,
+): Promise<ApiResponse<{ user_type: string; user_id: number; name: string }>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/login`, {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ user_code: userCode }),
+      body: JSON.stringify({ access_code: userCode }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => ({}))
       return { success: false, error: error.detail || "로그인에 실패했습니다" }
     }
 
-    const data = await response.json()
-    return { success: true, data }
+    const data: LoginApiResponse = await response.json()
+    return {
+      success: true,
+      data: {
+        user_id: data.user_info.id,
+        user_type: data.user_info.role,
+        name: data.user_info.name,
+      },
+    }
   } catch (error) {
-    console.error("[v0] Login error:", error)
+    console.error("[frontend] Login error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
@@ -34,28 +68,29 @@ export async function login(userCode: string): Promise<ApiResponse<{ user_type: 
 // 2. 관계자 계정 생성
 export async function createAdminAccount(
   currentUserId: string,
-): Promise<ApiResponse<{ user_id: string; user_code: string }>> {
+  name?: string,
+): Promise<ApiResponse<{ user_id: number; user_code: string }>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/create`, {
+    const response = await fetch(`${API_BASE_URL}/user/users/admin`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        current_user_id: currentUserId,
-        user_type: "admin",
+        current_user_id: Number(currentUserId),
+        name: name || `Admin-${Date.now()}`,
       }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => ({}))
       return { success: false, error: error.detail || "관계자 계정 생성에 실패했습니다" }
     }
 
     const data = await response.json()
-    return { success: true, data }
+    return { success: true, data: { user_id: data.id, user_code: data.access_code } }
   } catch (error) {
-    console.error("[v0] Create admin account error:", error)
+    console.error("[frontend] Create admin account error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
@@ -64,181 +99,121 @@ export async function createAdminAccount(
 export async function createUserAccount(
   currentUserId: string,
   userId: string,
-): Promise<ApiResponse<{ user_id: string; user_code: string }>> {
+): Promise<ApiResponse<{ user_id: number; user_code: string }>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/create`, {
+    const response = await fetch(`${API_BASE_URL}/users/user`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        current_user_id: currentUserId,
-        user_type: "user",
-        user_id: userId,
+        current_user_id: Number(currentUserId),
+        name: userId,
       }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => ({}))
       return { success: false, error: error.detail || "사용자 계정 생성에 실패했습니다" }
     }
 
     const data = await response.json()
-    return { success: true, data }
+    return { success: true, data: { user_id: data.user.id, user_code: data.user.access_code } }
   } catch (error) {
-    console.error("[v0] Create user account error:", error)
+    console.error("[frontend] Create user account error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
 
-// 4. 계정 목록 조회
-export async function getUserList(currentUserId: string): Promise<ApiResponse<any[]>> {
+// 4. 환경 목록 조회
+export async function listEnvironments(userId?: string): Promise<ApiResponse<EnvironmentSummary[]>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/list?current_user_id=${currentUserId}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    })
+    const params = new URLSearchParams({ size: "100" })
+    if (userId) {
+      params.append("user_id", userId)
+    }
+
+    const response = await fetch(`${API_BASE_URL}/environments?${params.toString()}`)
 
     if (!response.ok) {
-      const error = await response.json()
-      return { success: false, error: error.detail || "계정 목록 조회에 실패했습니다" }
+      const error = await response.json().catch(() => ({}))
+      return { success: false, error: error.detail || "환경 목록 조회에 실패했습니다" }
     }
 
     const data = await response.json()
-    return { success: true, data }
+    return { success: true, data: data.environments || [] }
   } catch (error) {
-    console.error("[v0] Get user list error:", error)
+    console.error("[frontend] List environments error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
 
-// 5. YAML 파일 업로드
+// 5. YAML 파일 업로드 (템플릿 설정)
 export async function uploadYaml(currentUserId: string, file: File): Promise<ApiResponse<any>> {
   try {
     const formData = new FormData()
     formData.append("current_user_id", currentUserId)
     formData.append("yaml", file)
 
-    const response = await fetch(`${API_BASE_URL}/yaml/upload`, {
+    const response = await fetch(`${API_BASE_URL}/templates/upload-yaml`, {
       method: "POST",
       body: formData,
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => ({}))
       return { success: false, error: error.detail || "YAML 파일 업로드에 실패했습니다" }
     }
 
     const data = await response.json()
     return { success: true, data }
   } catch (error) {
-    console.error("[v0] Upload YAML error:", error)
+    console.error("[frontend] Upload YAML error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
 
-// 6. Pod 삭제
-export async function deletePod(currentUserId: string, targetUserId: string): Promise<ApiResponse> {
+// 6. 환경 액션 (중지/재시작/삭제)
+export async function environmentAction(
+  environmentId: number,
+  action: "stop" | "restart" | "delete",
+): Promise<ApiResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/pod/delete`, {
+    const response = await fetch(`${API_BASE_URL}/environments/${environmentId}/actions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        current_user_id: currentUserId,
-        target_user_id: targetUserId,
-      }),
+      body: JSON.stringify({ action }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      return { success: false, error: error.detail || "Pod 삭제에 실패했습니다" }
+      const error = await response.json().catch(() => ({}))
+      return { success: false, error: error.detail || "환경 액션 실행에 실패했습니다" }
     }
 
     const data = await response.json()
     return { success: true, data }
   } catch (error) {
-    console.error("[v0] Delete pod error:", error)
+    console.error("[frontend] Environment action error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }
 
-// 7. Pod 재시작
-export async function restartPod(currentUserId: string, targetUserId: string): Promise<ApiResponse> {
+// 7. 메트릭 조회 (환경 기준)
+export async function getEnvironmentMetrics(environmentId: number): Promise<ApiResponse<any>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/pod/restart`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        current_user_id: currentUserId,
-        target_user_id: targetUserId,
-      }),
-    })
+    const response = await fetch(`${API_BASE_URL}/monitoring/environments/${environmentId}/metrics`)
 
     if (!response.ok) {
-      const error = await response.json()
-      return { success: false, error: error.detail || "Pod 재시작에 실패했습니다" }
-    }
-
-    const data = await response.json()
-    return { success: true, data }
-  } catch (error) {
-    console.error("[v0] Restart pod error:", error)
-    return { success: false, error: "서버와 통신할 수 없습니다" }
-  }
-}
-
-// 8. 메트릭 조회
-export async function getMetrics(userId: string): Promise<ApiResponse<any>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/metrics?user_id=${userId}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => ({}))
       return { success: false, error: error.detail || "메트릭 조회에 실패했습니다" }
     }
 
     const data = await response.json()
     return { success: true, data }
   } catch (error) {
-    console.error("[v0] Get metrics error:", error)
-    return { success: false, error: "서버와 통신할 수 없습니다" }
-  }
-}
-
-// 9. Pod 중지
-export async function stopPod(currentUserId: string, targetUserId: string): Promise<ApiResponse> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/pod/stop`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        current_user_id: currentUserId,
-        target_user_id: targetUserId,
-      }),
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      return { success: false, error: error.detail || "Pod 중지에 실패했습니다" }
-    }
-
-    const data = await response.json()
-    return { success: true, data }
-  } catch (error) {
-    console.error("[v0] Stop pod error:", error)
+    console.error("[frontend] Get metrics error:", error)
     return { success: false, error: "서버와 통신할 수 없습니다" }
   }
 }

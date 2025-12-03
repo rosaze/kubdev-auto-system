@@ -9,6 +9,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from app.core.database import get_db
+from app.core.dependencies import get_admin_user
 from app.models.environment import EnvironmentInstance
 from app.models.user import User
 from app.models.project_template import ProjectTemplate
@@ -40,6 +41,8 @@ async def get_all_environments_admin(
     status: Optional[str] = Query(None, description="Filter by status"),
     user_id: Optional[int] = Query(None, description="Filter by user"),
     namespace: Optional[str] = Query(None, description="Filter by namespace"),
+    created_by: Optional[int] = Query(None, description="Filter by creator (관계자별 필터링)"),
+    admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """모든 환경의 상태 조회 (Admin용) - K8s 실시간 데이터"""
@@ -49,8 +52,17 @@ async def get_all_environments_admin(
         # K8s에서 실시간 환경 상태 조회
         k8s_environments = await k8s_service.get_all_environments_status()
 
-        # 데이터베이스 환경 정보와 매칭
-        db_environments = db.query(EnvironmentInstance).all()
+        # 데이터베이스 환경 정보와 매칭 (created_by 필터링 추가)
+        db_query = db.query(EnvironmentInstance)
+
+        # 관계자별 필터링 (해당 관계자가 생성한 사용자의 환경만)
+        if created_by:
+            from app.models.user import User
+            # created_by가 생성한 사용자들의 환경만 조회
+            created_users = db.query(User.id).filter(User.created_by == created_by).subquery()
+            db_query = db_query.filter(EnvironmentInstance.user_id.in_(created_users))
+
+        db_environments = db_query.all()
 
         # 환경 정보 통합
         combined_environments = []

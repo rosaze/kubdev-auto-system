@@ -1,12 +1,28 @@
+# -*- coding: utf-8 -*-
 """
 Configuration settings for KubeDev Auto System
-환경변수 및 애플리케이션 설정 관리
 """
 
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import validator
 import os
+import sys
+import logging
+
+# Configure logging for config module
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Log encoding information
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Default encoding: {sys.getdefaultencoding()}")
+logger.info(f"File system encoding: {sys.getfilesystemencoding()}")
+try:
+    import locale
+    logger.info(f"Locale preferred encoding: {locale.getpreferredencoding()}")
+except Exception as e:
+    logger.warning(f"Could not get locale encoding: {e}")
 
 
 class Settings(BaseSettings):
@@ -90,13 +106,27 @@ class Settings(BaseSettings):
         return v
 
     class Config:
-        env_file = ".env"
+        # Disable .env file to avoid encoding issues on Windows
+        # env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
 
 
 # 전역 설정 인스턴스
-settings = Settings()
+try:
+    logger.info("Creating Settings instance...")
+    logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"Environment variables: DATABASE_URL={os.getenv('DATABASE_URL', 'NOT SET')}")
+    settings = Settings()
+    logger.info("Settings instance created successfully")
+    logger.info(f"DATABASE_URL from settings: {settings.DATABASE_URL}")
+except Exception as e:
+    logger.error(f"Failed to create Settings instance: {e}")
+    logger.error(f"Error type: {type(e).__name__}")
+    logger.error(f"Error details: {str(e)}")
+    import traceback
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+    raise
 
 
 def get_database_url() -> str:

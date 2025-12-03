@@ -26,6 +26,25 @@ from app.services.dockerfile_generator import DockerfileGenerator
 
 router = APIRouter()
 
+@router.post("/upload-yaml")
+async def upload_template_yaml(
+    current_user_id: int = Form(..., description="업로드하는 사용자 ID"),
+    yaml: UploadFile = File(..., description="템플릿 YAML 파일"),
+):
+    """
+    YAML 템플릿 파일 업로드 (프론트엔드 연동용)
+    """
+    try:
+        content = await yaml.read()
+        return {
+            "status": "uploaded",
+            "filename": yaml.filename,
+            "size": len(content),
+            "uploaded_by": current_user_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process YAML: {str(e)}")
+
 
 @router.post("/", response_model=ProjectTemplateResponse)
 async def create_template(
@@ -510,7 +529,6 @@ async def create_template_from_yaml(
     yaml_file: UploadFile = File(..., description="YAML file to upload"),
     git_repository: Optional[str] = Form(None, description="Git repository URL (optional)"),
     description: Optional[str] = Form("YAML로 생성된 템플릿", description="Template description"),
-    organization_id: int = Form(1, description="Organization ID"),
     created_by: int = Form(..., description="Creator user ID"),
     db: Session = Depends(get_db)
 ):
@@ -585,8 +603,7 @@ async def create_template_from_yaml(
 
         # 6. 템플릿 중복 확인
         existing = db.query(ProjectTemplate).filter(
-            ProjectTemplate.name == template_name,
-            ProjectTemplate.organization_id == organization_id
+            ProjectTemplate.name == template_name
         ).first()
 
         if existing:
@@ -615,7 +632,6 @@ async def create_template_from_yaml(
             default_git_repo=environment_config.get("git_repository"),
             git_branch=environment_config.get("git_branch", "main"),
             is_public=False,
-            organization_id=organization_id,
             created_by=created_by
         )
 

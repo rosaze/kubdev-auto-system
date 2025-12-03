@@ -22,8 +22,8 @@ data:
 
     def ns_name(user: str, name: str) -> str:
         # workspace namespace: kubedev-<user>-<name>
-        safe_user = user.replace("_", "-").replace(".", "-")
-        safe_name = name.replace("_", "-").replace(".", "-")
+        safe_user = user.replace("_", "-").replace(".", "-").replace(" ", "-").lower()
+        safe_name = name.replace("_", "-").replace(".", "-").replace(" ", "-").lower()
         return f"kubedev-{safe_user}-{safe_name}"[:63]
 
     def label_selector(workspace_id: str) -> str:
@@ -72,7 +72,7 @@ data:
             "if [ ! -d /workspace/.git ] && [ -n \"$GIT_URL\" ]; then git clone --depth 1 -b \"${GIT_REF:-main}\" \"$GIT_URL\" /workspace || true; fi\n"
             "if [ -n \"$INIT_CMD\" ]; then echo '[kubedev] running init'; sh -lc \"$INIT_CMD\" || true; fi\n"
             "if command -v code-server >/dev/null 2>&1; then \
-               code-server --bind-addr 0.0.0.0:8080 --auth none --user-data-dir /workspace/.vscode --extensions-dir /workspace/.vscode/extensions & \
+               code-server --bind-addr 0.0.0.0:8080 --auth none --user-data-dir /workspace/.vscode --extensions-dir /workspace/.vscode/extensions /workspace & \
              else \
                echo '[kubedev] code-server not found; continuing'; \
              fi\n"
@@ -180,10 +180,15 @@ data:
         ports = spec.get('ports') or []
         storage = (spec.get('storage') or {}).get('size', '20Gi')
 
+        # Git URL 읽기 (여러 형식 지원)
+        git_url = git.get('repoUrl') or spec.get('gitRepository') or None
+        git_ref = git.get('ref', 'main')
+
         workspace_ns = ns_name(user, name)
+        safe_user = user.replace("_", "-").replace(".", "-").replace(" ", "-").lower()
         labels = {
             'kubedev.io/workspace-id': name,
-            'kubedev.io/owner': user,
+            'kubedev.io/owner': safe_user,
         }
         patch.status['phase'] = 'Provisioning'
         patch.status['namespace'] = workspace_ns
@@ -192,8 +197,8 @@ data:
         ensure_namespace(core, workspace_ns, labels)
         ensure_pvc(core, workspace_ns, 'ws', storage)
         env = {
-            'GIT_URL': git.get('repoUrl'),
-            'GIT_REF': git.get('ref', 'main'),
+            'GIT_URL': git_url,
+            'GIT_REF': git_ref,
             'INIT_CMD': commands.get('init'),
             'START_CMD': commands.get('start'),
         }
