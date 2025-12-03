@@ -529,7 +529,6 @@ async def create_template_from_yaml(
     yaml_file: UploadFile = File(..., description="YAML file to upload"),
     git_repository: Optional[str] = Form(None, description="Git repository URL (optional)"),
     description: Optional[str] = Form("YAML로 생성된 템플릿", description="Template description"),
-    organization_id: int = Form(1, description="Organization ID"),
     created_by: int = Form(..., description="Creator user ID"),
     db: Session = Depends(get_db)
 ):
@@ -604,8 +603,7 @@ async def create_template_from_yaml(
 
         # 6. 템플릿 중복 확인
         existing = db.query(ProjectTemplate).filter(
-            ProjectTemplate.name == template_name,
-            ProjectTemplate.organization_id == organization_id
+            ProjectTemplate.name == template_name
         ).first()
 
         if existing:
@@ -634,7 +632,6 @@ async def create_template_from_yaml(
             default_git_repo=environment_config.get("git_repository"),
             git_branch=environment_config.get("git_branch", "main"),
             is_public=False,
-            organization_id=organization_id,
             created_by=created_by
         )
 

@@ -60,7 +60,6 @@ class ProjectTemplate(Base):
 
     # 접근 권한
     is_public = Column(Boolean, default=False)   # 공개 템플릿 여부
-    organization_id = Column(Integer, nullable=True)  # 조직 ID (향후 확장용)
 
     # 생성자 정보
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)

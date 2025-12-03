@@ -34,7 +34,6 @@ class ProjectTemplateCreate(ProjectTemplateBase):
     default_git_repo: Optional[str] = None
     git_branch: str = Field(default="main")
     is_public: bool = Field(default=False)
-    organization_id: Optional[int] = None
 
 
 class ProjectTemplateUpdate(BaseModel):
@@ -73,7 +72,6 @@ class ProjectTemplateResponse(ProjectTemplateBase):
     default_git_repo: Optional[str]
     git_branch: str
     is_public: bool
-    organization_id: Optional[int]
     created_by: int
     usage_count: int
     created_at: datetime

@@ -101,7 +101,7 @@ export async function createUserAccount(
   userId: string,
 ): Promise<ApiResponse<{ user_id: number; user_code: string }>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/user/users/user`, {
+    const response = await fetch(`${API_BASE_URL}/users/user`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
