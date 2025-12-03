@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { createAdminAccount, createUserAccount } from "@/lib/api"
 
 export default function AdminCreatePage() {
   const router = useRouter()
@@ -24,6 +25,9 @@ export default function AdminCreatePage() {
     permissions?: string[]
   } | null>(null)
 
+  const [isCreating, setIsCreating] = useState(false)
+  const [createError, setCreateError] = useState("")
+
   useEffect(() => {
     setMounted(true)
     const code = localStorage.getItem("accessCode")
@@ -38,31 +42,59 @@ export default function AdminCreatePage() {
     }
   }, [router])
 
-  const generateCode = () => {
-    return Array.from({ length: 5 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join("")
-  }
-
-  const handleCreateAdminAccount = () => {
-    const code = generateCode()
-    setGeneratedAccount({
-      type: "admin",
-      code,
-    })
-  }
-
-  const handleCreateUserAccount = () => {
-    if (!userId.trim() || permissions.length === 0) {
-      alert("ID와 권한을 모두 입력해주세요.")
+  const handleCreateAdminAccount = async () => {
+    const currentUserId = localStorage.getItem("userId")
+    if (!currentUserId) {
+      setCreateError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
       return
     }
 
-    const code = generateCode()
-    setGeneratedAccount({
-      type: "user",
-      code,
-      userId: userId.trim(),
-      permissions,
-    })
+    setIsCreating(true)
+    setCreateError("")
+
+    const result = await createAdminAccount(currentUserId)
+
+    if (result.success && result.data) {
+      setGeneratedAccount({
+        type: "admin",
+        code: result.data.user_code,
+      })
+    } else {
+      setCreateError(result.error || "계정 생성에 실패했습니다")
+    }
+
+    setIsCreating(false)
+  }
+
+  const handleCreateUserAccount = async () => {
+    if (!userId.trim() || permissions.length === 0) {
+      setCreateError("ID와 권한을 모두 입력해주세요.")
+      return
+    }
+
+    const currentUserId = localStorage.getItem("userId")
+    if (!currentUserId) {
+      setCreateError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
+      return
+    }
+
+    setIsCreating(true)
+    setCreateError("")
+
+    const result = await createUserAccount(currentUserId, userId.trim())
+
+    if (result.success && result.data) {
+      setGeneratedAccount({
+        type: "user",
+        code: result.data.user_code,
+        userId: userId.trim(),
+        permissions,
+      })
+    } else {
+      setCreateError(result.error || "계정 생성에 실패했습니다")
+    }
+
+    setIsCreating(false)
   }
 
   const togglePermission = (permission: string) => {
@@ -71,6 +103,8 @@ export default function AdminCreatePage() {
 
   const handleLogout = () => {
     localStorage.removeItem("accessCode")
+    localStorage.removeItem("userId")
+    localStorage.removeItem("userType")
     localStorage.removeItem("environmentSet")
     router.push("/")
   }
@@ -84,6 +118,7 @@ export default function AdminCreatePage() {
     setUserId("")
     setPermissions([])
     setGeneratedAccount(null)
+    setCreateError("")
   }
 
   if (!mounted) {
@@ -161,6 +196,19 @@ export default function AdminCreatePage() {
             </CardContent>
           </Card>
 
+          {createError && (
+            <div className="flex items-center gap-2 p-3 bg-destructive/10 text-destructive rounded-lg">
+              <svg className="w-5 h-5" fill="none" strokeWidth="2" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                />
+              </svg>
+              <span className="text-sm">{createError}</span>
+            </div>
+          )}
+
           {accountType === "admin" && !generatedAccount && (
             <Card>
               <CardHeader>
@@ -168,8 +216,8 @@ export default function AdminCreatePage() {
                 <CardDescription>새로운 관계자 계정을 생성합니다</CardDescription>
               </CardHeader>
               <CardContent>
-                <Button className="w-full" size="lg" onClick={handleCreateAdminAccount}>
-                  계정 생성하기
+                <Button className="w-full" size="lg" onClick={handleCreateAdminAccount} disabled={isCreating}>
+                  {isCreating ? "생성 중..." : "계정 생성하기"}
                 </Button>
               </CardContent>
             </Card>
@@ -190,6 +238,7 @@ export default function AdminCreatePage() {
                     value={userId}
                     onChange={(e) => setUserId(e.target.value.slice(0, 10))}
                     maxLength={10}
+                    disabled={isCreating}
                   />
                   <p className="text-xs text-muted-foreground">{userId.length}/10</p>
                 </div>
@@ -202,6 +251,7 @@ export default function AdminCreatePage() {
                         id="read"
                         checked={permissions.includes("read")}
                         onCheckedChange={() => togglePermission("read")}
+                        disabled={isCreating}
                       />
                       <label htmlFor="read" className="text-sm font-medium cursor-pointer">
                         읽기 (Read)
@@ -212,6 +262,7 @@ export default function AdminCreatePage() {
                         id="write"
                         checked={permissions.includes("write")}
                         onCheckedChange={() => togglePermission("write")}
+                        disabled={isCreating}
                       />
                       <label htmlFor="write" className="text-sm font-medium cursor-pointer">
                         쓰기 (Write)
@@ -220,8 +271,8 @@ export default function AdminCreatePage() {
                   </div>
                 </div>
 
-                <Button className="w-full" size="lg" onClick={handleCreateUserAccount}>
-                  계정 생성하기
+                <Button className="w-full" size="lg" onClick={handleCreateUserAccount} disabled={isCreating}>
+                  {isCreating ? "생성 중..." : "계정 생성하기"}
                 </Button>
               </CardContent>
             </Card>

@@ -23,18 +23,14 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     environment:
-      - KUBEDEV_MOCK=1
       - DATABASE_URL=postgresql://kubdev:password@db:5432/kubdev
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-      - KUBEDEV_MOCK=0
-    ports:
-      - "8000:8000"
     volumes:
-      - ${HOME}/.kube:/root/.kube:ro
+      - ./.kube:/root/.kube:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

@@ -9,57 +9,42 @@ from sqlalchemy.exc import IntegrityError
 def create_initial_users():
     db = SessionLocal()
     try:
-        # 1. Super Admin 생성
+        # 1. Admin 생성
         admin_user = db.query(User).filter(User.hashed_password == "ADMIN").first()
         if not admin_user:
             admin_user = User(
-                name="Super Admin",
-                hashed_password="ADMIN",  # 접속 코드
-                role=UserRole.SUPER_ADMIN,
+                name="Admin",
+                hashed_password="ADMIN",
+                role=UserRole.ADMIN,
                 is_active=True,
-                is_verified=True
+                created_by=None
             )
             db.add(admin_user)
-            print("✅ Super Admin 생성: 접속 코드 'ADMIN'")
+            db.flush()  # admin_user.id를 얻기 위해 flush, test_user 생성 시 필요
+            print("✅ Admin 생성: 접속 코드 'ADMIN'")
         else:
-            print("ℹ️  Super Admin 이미 존재")
+            print("ℹ️  Admin 이미 존재")
 
-        # 2. 테스트 개발자 생성
-        dev_user = db.query(User).filter(User.hashed_password == "DEV01").first()
-        if not dev_user:
-            dev_user = User(
-                name="Test Developer",
-                hashed_password="DEV01",  # 접속 코드
-                role=UserRole.DEVELOPER,
+        # 2. 일반 사용자 생성
+        user = db.query(User).filter(User.hashed_password == "USER1").first()
+        if not user:
+            user = User(
+                name="Test User",
+                hashed_password="USER1",
+                role=UserRole.USER,
                 is_active=True,
-                is_verified=True
+                created_by=admin_user.id  # Admin이 생성
             )
-            db.add(dev_user)
-            print("✅ Test Developer 생성: 접속 코드 'DEV01'")
+            db.add(user)
+            print("✅ Test User 생성: 접속 코드 'USER1'")
         else:
-            print("ℹ️  Test Developer 이미 존재")
-
-        # 3. 조직 관리자 생성
-        org_admin = db.query(User).filter(User.hashed_password == "ORG01").first()
-        if not org_admin:
-            org_admin = User(
-                name="Organization Admin",
-                hashed_password="ORG01",  # 접속 코드
-                role=UserRole.ORG_ADMIN,
-                is_active=True,
-                is_verified=True
-            )
-            db.add(org_admin)
-            print("✅ Organization Admin 생성: 접속 코드 'ORG01'")
-        else:
-            print("ℹ️  Organization Admin 이미 존재")
+            print("ℹ️  Test User 이미 존재")
 
         db.commit()
         print("\n🎉 초기 사용자 생성 완료!")
         print("\n사용 가능한 접속 코드:")
-        print("  - ADMIN (Super Admin)")
-        print("  - DEV01 (Developer)")
-        print("  - ORG01 (Organization Admin)")
+        print("  - ADMIN (Admin)")
+        print("  - USER1 (User)")
 
     except IntegrityError as e:
         db.rollback()

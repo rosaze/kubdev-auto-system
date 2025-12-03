@@ -23,14 +23,70 @@ class KubernetesService:
             except Exception:
                 config.load_incluster_config()
                 log.info("Loaded in-cluster config")
+
+            # For development: disable SSL verification to allow host.docker.internal
+            from kubernetes import client
+            conf = client.Configuration.get_default_copy()
+            conf.verify_ssl = False
+            client.Configuration.set_default(conf)
+            log.info("SSL certificate verification disabled for Kubernetes client.")
+
             self.k8s_available = True
             self.v1 = client.CoreV1Api()
             self.apps_v1 = client.AppsV1Api()
             self.networking_v1 = client.NetworkingV1Api()
+            self.custom_api = client.CustomObjectsApi()
             log.info("Kubernetes clients initialized successfully")
         except Exception as e:
             log.warning("Kubernetes config not available. Some features may not work.", error=str(e))
             self.k8s_available = False
+
+    async def create_custom_object(self, custom_object: Dict[str, Any]) -> Dict[str, Any]:
+        """KubeDevEnvironment CRD와 같은 사용자 정의 리소스를 생성합니다."""
+        self._check_k8s_availability()
+
+        api_version = custom_object.get("apiVersion")
+        if not api_version or "/" not in api_version:
+            raise ValueError("Invalid apiVersion in custom object")
+            
+        group, version = api_version.split('/')
+        kind = custom_object.get("kind")
+        namespace = custom_object.get("metadata", {}).get("namespace", "default")
+        
+        # CRD의 정확한 plural form을 사용해야 합니다. 'kubedevenvironments'
+        plural = "kubedevenvironments" if kind == "KubeDevEnvironment" else f"{kind.lower()}s"
+
+        log.info(
+            "Attempting to create custom object",
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=custom_object.get("metadata", {}).get("name")
+        )
+
+        try:
+            api_response = self.custom_api.create_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                body=custom_object,
+            )
+            log.info("Custom object created successfully")
+            return api_response
+        except ApiException as e:
+            log.error("Failed to create custom object", error=str(e), exc_info=True)
+            # 에러 메시지를 더 유용하게 만듭니다.
+            error_body = e.body
+            if hasattr(e, 'body'):
+                try:
+                    import json
+                    error_details = json.loads(e.body)
+                    error_body = error_details.get("message", e.body)
+                except (json.JSONDecodeError, AttributeError):
+                    pass # 파싱 실패 시 원본 body 사용
+            raise Exception(f"Failed to create custom object: {error_body}")
 
     def _check_k8s_availability(self):
         """K8s 연결 상태 확인"""
@@ -265,7 +321,161 @@ class KubernetesService:
 
     async def get_live_resource_metrics(self, namespace: str) -> Dict[str, Any]:
         """실시간 리소스 메트릭 조회 (메트릭 서버 필요)"""
-        log.warning("Live resource metrics are not implemented", namespace=namespace)
-        return {
-            "note": "Metrics server required for live metrics"
-        }
+        self._check_k8s_availability()
+        log.info("Getting live resource metrics", namespace=namespace)
+
+        try:
+            # 해당 네임스페이스의 Pod들 조회
+            pods = self.v1.list_namespaced_pod(namespace=namespace)
+
+            metrics_data = {
+                "namespace": namespace,
+                "pods": []
+            }
+
+            for pod in pods.items:
+                pod_metrics = {
+                    "name": pod.metadata.name,
+                    "status": pod.status.phase,
+                    "cpu_usage_millicores": 0,  # 메트릭 서버 없이는 추정값
+                    "memory_usage_mb": 0,       # 메트릭 서버 없이는 추정값
+                    "ready": any(condition.status == "True" for condition in pod.status.conditions if condition.type == "Ready") if pod.status.conditions else False
+                }
+                metrics_data["pods"].append(pod_metrics)
+
+            log.info("Retrieved live metrics for namespace", namespace=namespace, pod_count=len(metrics_data["pods"]))
+            return metrics_data
+
+        except ApiException as e:
+            log.error("Failed to get live metrics", namespace=namespace, error=str(e), exc_info=True)
+            return {
+                "namespace": namespace,
+                "error": str(e),
+                "pods": []
+            }
+
+    async def scale_deployment(self, namespace: str, deployment_name: str, replicas: int) -> bool:
+        """Deployment 스케일 조정"""
+        self._check_k8s_availability()
+        log.info("Scaling deployment", namespace=namespace, deployment=deployment_name, replicas=replicas)
+
+        try:
+            # 현재 Deployment 조회
+            deployment = self.apps_v1.read_namespaced_deployment(
+                name=deployment_name,
+                namespace=namespace
+            )
+
+            # 레플리카 수 변경
+            deployment.spec.replicas = replicas
+
+            # Deployment 업데이트
+            self.apps_v1.patch_namespaced_deployment(
+                name=deployment_name,
+                namespace=namespace,
+                body=deployment
+            )
+
+            log.info("Deployment scaled successfully", namespace=namespace, deployment=deployment_name, replicas=replicas)
+            return True
+
+        except ApiException as e:
+            log.error("Failed to scale deployment", namespace=namespace, deployment=deployment_name, replicas=replicas, error=str(e), exc_info=True)
+            return False
+
+    async def delete_namespace(self, namespace: str) -> bool:
+        """네임스페이스 및 모든 리소스 삭제"""
+        self._check_k8s_availability()
+        log.info("Deleting namespace and all resources", namespace=namespace)
+
+        try:
+            # 네임스페이스 삭제 (모든 리소스가 함께 삭제됨)
+            self.v1.delete_namespace(name=namespace)
+            log.info("Namespace deleted successfully", namespace=namespace)
+            return True
+
+        except ApiException as e:
+            if e.status == 404:
+                log.info("Namespace already deleted", namespace=namespace)
+                return True
+            log.error("Failed to delete namespace", namespace=namespace, error=str(e), exc_info=True)
+            return False
+
+    async def create_custom_object(self, custom_object: Dict[str, Any]) -> Dict[str, Any]:
+        """KubeDevEnvironment와 같은 커스텀 리소스를 생성합니다."""
+        self._check_k8s_availability()
+
+        api_version = custom_object.get("apiVersion")
+        kind = custom_object.get("kind")
+        metadata = custom_object.get("metadata", {})
+        namespace = metadata.get("namespace", "default")
+        name = metadata.get("name")
+
+        log.info("Creating custom object", kind=kind, name=name, namespace=namespace)
+
+        if not all([api_version, kind, name]):
+            raise ValueError("Custom object must have apiVersion, kind, and metadata.name")
+
+        try:
+            group, version = api_version.split('/')
+
+            # 프로젝트의 CRD kind가 "KubeDevEnvironment"이므로, 복수형은 "kubedevenvironments" 입니다.
+            if kind == "KubeDevEnvironment":
+                plural = "kubedevenvironments"
+            else:
+                # 다른 종류의 CRD를 위한 간단한 복수형 추론 규칙
+                plural = f"{kind.lower()}s"
+
+            api_response = self.custom_api.create_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                body=custom_object,
+            )
+            log.info("Custom object created successfully", kind=kind, name=name)
+            return api_response
+        except ApiException as e:
+            # e.body는 bytes 타입일 수 있으므로, 안전하게 디코딩하여 실제 에러 메시지를 확인합니다.
+            error_body = e.body
+            if isinstance(error_body, bytes):
+                try:
+                    error_body = error_body.decode('utf-8')
+                except UnicodeDecodeError:
+                    error_body = error_body.decode('cp949', errors='ignore')
+
+            log.error("Failed to create custom object", kind=kind, name=name, error=error_body, exc_info=True)
+            raise Exception(f"Failed to create custom object: {error_body}")
+        except Exception as e:
+            log.error("An unexpected error occurred while creating custom object", kind=kind, name=name, error=str(e), exc_info=True)
+            raise e
+
+    async def get_custom_object(self, group: str, version: str, namespace: str, plural: str, name: str) -> Dict[str, Any]:
+        """KubeDevEnvironment CRD의 현재 상태를 조회합니다."""
+        self._check_k8s_availability()
+
+        log.info("Getting custom object", group=group, version=version, namespace=namespace, plural=plural, name=name)
+
+        try:
+            api_response = self.custom_api.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name
+            )
+            log.info("Custom object retrieved successfully", name=name)
+            return api_response
+        except ApiException as e:
+            error_body = e.body
+            if isinstance(error_body, bytes):
+                try:
+                    error_body = error_body.decode('utf-8')
+                except UnicodeDecodeError:
+                    error_body = error_body.decode('cp949', errors='ignore')
+
+            log.error("Failed to get custom object", name=name, error=error_body, exc_info=True)
+            raise Exception(f"Failed to get custom object: {error_body}")
+        except Exception as e:
+            log.error("An unexpected error occurred while getting custom object", name=name, error=str(e), exc_info=True)
+            raise e

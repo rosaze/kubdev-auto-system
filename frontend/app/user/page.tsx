@@ -1,36 +1,102 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 const DUMMY_USER_TOOLS = [
   { name: "VS Code", version: "1.85.0", status: "installed" },
   { name: "Python", version: "3.11.5", status: "installed" },
   { name: "Docker", version: "24.0.7", status: "installed" },
-]
+];
+
+interface EnvironmentInfo {
+  status: string;
+  environment_id?: number;
+  environment_name?: string;
+  environment_status?: string;
+  access_url?: string;
+  git_repository?: string;
+  git_branch?: string;
+  can_access: boolean;
+  message?: string;
+  started_at?: string;
+  expires_at?: string;
+}
 
 export default function UserHomePage() {
-  const router = useRouter()
-  const [mounted, setMounted] = useState(false)
-  const [tools] = useState(DUMMY_USER_TOOLS)
+  const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+  const [tools] = useState(DUMMY_USER_TOOLS);
+  const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // 환경 정보 가져오기 함수
+  const fetchEnvironmentInfo = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setError("인증 토큰이 없습니다. 다시 로그인해주세요.");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/v1/auth/my-environment", {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // 토큰 만료
+          localStorage.removeItem("token");
+          localStorage.removeItem("accessCode");
+          router.push("/");
+          return;
+        }
+        throw new Error(`API 호출 실패: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setEnvironmentInfo(data);
+      setError(null);
+    } catch (err) {
+      console.error("환경 정보 조회 실패:", err);
+      setError("환경 정보를 불러오는데 실패했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setMounted(true)
-    const code = localStorage.getItem("accessCode")
+    setMounted(true);
+    const code = localStorage.getItem("accessCode");
     if (!code) {
-      router.push("/")
+      router.push("/");
+      return;
     }
-  }, [router])
+
+    // 환경 정보 가져오기
+    fetchEnvironmentInfo();
+  }, [router]);
 
   const handleLogout = () => {
-    localStorage.removeItem("accessCode")
-    router.push("/")
-  }
+    localStorage.removeItem("accessCode");
+    router.push("/");
+  };
 
   if (!mounted) {
-    return null
+    return null;
   }
 
   return (
@@ -65,13 +131,144 @@ export default function UserHomePage() {
         <div className="max-w-4xl mx-auto space-y-8">
           <div className="text-center space-y-3">
             <h2 className="text-4xl font-bold text-balance">환영합니다</h2>
-            <p className="text-lg text-muted-foreground">할당된 도구를 확인하고 사용을 시작하세요</p>
+            <p className="text-lg text-muted-foreground">
+              할당된 도구를 확인하고 사용을 시작하세요
+            </p>
           </div>
+
+          {/* 웹 IDE 접속 카드 */}
+          <Card className="bg-gradient-to-br from-blue-50/50 to-indigo-50/50 border-blue-200/50 dark:from-blue-950/20 dark:to-indigo-950/20 dark:border-blue-800/30">
+            <CardHeader>
+              <CardTitle className="text-2xl flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-500 text-white rounded-lg flex items-center justify-center">
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+                    />
+                  </svg>
+                </div>
+                웹 IDE 접속
+              </CardTitle>
+              <CardDescription className="text-base">
+                할당된 VS Code 환경에 접속하여 개발을 시작하세요
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* 로딩 상태 */}
+              {isLoading && (
+                <div className="flex items-center gap-3 p-4 bg-blue-50/50 dark:bg-blue-950/20 rounded-lg border border-blue-200/50">
+                  <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">환경 정보를 불러오는 중...</p>
+                </div>
+              )}
+
+              {/* 에러 상태 */}
+              {error && (
+                <div className="p-4 bg-red-50/50 dark:bg-red-950/20 rounded-lg border border-red-200/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="font-medium text-sm text-red-700 dark:text-red-300">오류 발생</p>
+                  </div>
+                  <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-red-700 border-red-300 hover:bg-red-50"
+                    onClick={() => {
+                      setError(null);
+                      setIsLoading(true);
+                      fetchEnvironmentInfo();
+                    }}
+                  >
+                    다시 시도
+                  </Button>
+                </div>
+              )}
+
+              {/* 환경 정보 표시 */}
+              {!isLoading && !error && environmentInfo && (
+                <>
+                  {/* 환경 상태 표시 */}
+                  <div className="flex items-center gap-3 p-3 bg-white/50 dark:bg-gray-800/50 rounded-lg border">
+                    <div className={`w-3 h-3 rounded-full ${
+                      environmentInfo.can_access && environmentInfo.status === 'ready'
+                        ? 'bg-green-500 animate-pulse'
+                        : environmentInfo.status === 'not_running'
+                        ? 'bg-yellow-500'
+                        : 'bg-red-500'
+                    }`}></div>
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">환경 상태</p>
+                      <p className="text-xs text-muted-foreground">
+                        {environmentInfo.can_access && environmentInfo.status === 'ready'
+                          ? `${environmentInfo.environment_name} - 실행 중`
+                          : environmentInfo.message || environmentInfo.environment_status || '상태 확인 중'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Git 리포지토리 정보 */}
+                  {environmentInfo.git_repository && (
+                    <div className="flex items-center gap-3 p-3 bg-white/50 dark:bg-gray-800/50 rounded-lg border">
+                      <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.30 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">연결된 프로젝트</p>
+                        <p className="text-xs text-muted-foreground">
+                          {environmentInfo.git_repository} ({environmentInfo.git_branch || 'main'})
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* VS Code 접속 버튼 */}
+                  <Button
+                    className={`w-full h-14 text-lg font-semibold ${
+                      environmentInfo.can_access && environmentInfo.access_url
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-gray-400 cursor-not-allowed text-gray-200'
+                    }`}
+                    disabled={!environmentInfo.can_access || !environmentInfo.access_url}
+                    onClick={() => {
+                      if (environmentInfo.access_url) {
+                        window.open(environmentInfo.access_url, "_blank");
+                      }
+                    }}
+                  >
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    {environmentInfo.can_access ? 'VS Code 환경 접속' : '환경이 준비되지 않음'}
+                  </Button>
+
+                  <p className="text-xs text-muted-foreground text-center">
+                    {environmentInfo.can_access
+                      ? '새 탭에서 웹 기반 VS Code가 실행됩니다'
+                      : '환경을 시작한 후 접속할 수 있습니다'
+                    }
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
               <CardTitle className="text-2xl">사용 가능한 도구</CardTitle>
-              <CardDescription className="text-base">귀하의 계정에 설치된 개발 도구 목록입니다</CardDescription>
+              <CardDescription className="text-base">
+                귀하의 계정에 설치된 개발 도구 목록입니다
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid md:grid-cols-2 gap-4">
@@ -97,7 +294,9 @@ export default function UserHomePage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-lg">{tool.name}</p>
-                      <p className="text-sm text-muted-foreground">버전 {tool.version}</p>
+                      <p className="text-sm text-muted-foreground">
+                        버전 {tool.version}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <svg
@@ -142,7 +341,9 @@ export default function UserHomePage() {
                 </div>
                 <div>
                   <p className="font-medium">프로젝트 시작</p>
-                  <p className="text-sm text-muted-foreground">필요한 도구를 사용하여 개발을 시작하세요</p>
+                  <p className="text-sm text-muted-foreground">
+                    필요한 도구를 사용하여 개발을 시작하세요
+                  </p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -151,7 +352,9 @@ export default function UserHomePage() {
                 </div>
                 <div>
                   <p className="font-medium">지원 요청</p>
-                  <p className="text-sm text-muted-foreground">문제가 발생하면 관계자에게 문의하세요</p>
+                  <p className="text-sm text-muted-foreground">
+                    문제가 발생하면 관계자에게 문의하세요
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -159,5 +362,5 @@ export default function UserHomePage() {
         </div>
       </main>
     </div>
-  )
+  );
 }
