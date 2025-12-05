@@ -24,6 +24,7 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       - DATABASE_URL=postgresql://kubdev:password@db:5432/kubdev
+      - SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
     ports:
       - "8000:8000"
     depends_on:
@@ -31,10 +32,12 @@ services:
         condition: service_healthy
     volumes:
       - ./.kube:/root/.kube:ro
+      - ./demo_nodejs_working.yaml:/app/demo_nodejs_working.yaml:ro
+      - ./demo_python_ml.yaml:/app/demo_python_ml.yaml:ro
+      - ./demo_bash_simple.yaml:/app/demo_bash_simple.yaml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
   postgres_data:
-
