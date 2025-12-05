@@ -350,3 +350,43 @@ export async function createTemplateFromYaml(
     return { success: false, error: "서버와 통신할 수 없습니다" };
   }
 }
+
+// 11. 사용자 + 환경 통합 생성 (새로운 엔드포인트)
+export async function createUserWithEnvironment(
+  userName: string,
+  templateId: number
+): Promise<ApiResponse<{ user_id: number; access_code: string; environment_id: number }>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/user-with-environment`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: userName,
+        template_id: templateId,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: error.detail || "사용자 및 환경 생성에 실패했습니다",
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: true,
+      data: {
+        user_id: data.user_id,
+        access_code: data.access_code,
+        environment_id: data.environment_id,
+      },
+    };
+  } catch (error) {
+    console.error("[frontend] Create user with environment error:", error);
+    return { success: false, error: "서버와 통신할 수 없습니다" };
+  }
+}
