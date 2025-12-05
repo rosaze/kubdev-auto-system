@@ -293,8 +293,12 @@ export default function AdminCreatePage() {
                     <p className="text-sm text-muted-foreground mb-2">생성된 접속 코드</p>
                     <p className="text-3xl font-mono font-bold text-primary tracking-wider">{generatedAccount.code}</p>
                   </div>
-                  <Button className="w-full bg-transparent" variant="outline" onClick={() => router.push("/admin")}>
-                    홈으로 돌아가기
+                  <Button
+                    className="w-full bg-transparent"
+                    variant="outline"
+                    onClick={() => router.push("/admin/monitor")}
+                  >
+                    모니터링으로 가기
                   </Button>
                 </div>
               </CardContent>
