@@ -6,23 +6,18 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { getUserList, getMetrics, stopPod, restartPod, deletePod } from "@/lib/api"
+import { listEnvironments, getAllEnvironmentMetrics, environmentAction, EnvironmentSummary } from "@/lib/api"
 
-interface UserAccount {
-  id: string
-  code: string
-  nodeName?: string
-  ip?: string
-  port?: number
-  cpuUsage?: number
-  permissions: string[]
+interface EnvironmentWithMetrics extends EnvironmentSummary {
+  cpu?: number
+  memory?: number
 }
 
 export default function AdminMonitorPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
-  const [accounts, setAccounts] = useState<UserAccount[]>([])
+  const [environments, setEnvironments] = useState<EnvironmentWithMetrics[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -34,100 +29,71 @@ export default function AdminMonitorPage() {
       return
     }
 
-    loadUserAccounts()
+    loadEnvironments()
   }, [router])
 
-  const loadUserAccounts = async () => {
-    const currentUserId = localStorage.getItem("userId")
-    if (!currentUserId) {
-      setError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
-      setIsLoading(false)
-      return
-    }
-
+  const loadEnvironments = async () => {
     setIsLoading(true)
     setError("")
 
-    // 사용자 목록 가져오기
-    const userListResult = await getUserList(currentUserId)
+    try {
+      // 모든 환경 목록 가져오기
+      const envListResult = await listEnvironments()
 
-    if (!userListResult.success) {
-      setError(userListResult.error || "계정 목록을 불러올 수 없습니다")
-      setIsLoading(false)
-      return
-    }
+      if (!envListResult.success) {
+        setError(envListResult.error || "환경 목록을 불러올 수 없습니다")
+        setIsLoading(false)
+        return
+      }
 
-    // 각 사용자의 메트릭 정보 가져오기
-    const usersWithMetrics: UserAccount[] = []
+      // 메트릭 정보 가져오기
+      const metricsResult = await getAllEnvironmentMetrics()
 
-    for (const user of userListResult.data || []) {
-      const metricsResult = await getMetrics(user.user_id)
-
+      // 메트릭 데이터를 환경 ID로 매핑
+      const metricsMap = new Map()
       if (metricsResult.success && metricsResult.data) {
-        usersWithMetrics.push({
-          id: user.user_id,
-          code: user.user_code,
-          nodeName: metricsResult.data.node_name,
-          ip: metricsResult.data.ip,
-          port: metricsResult.data.port,
-          cpuUsage: metricsResult.data.cpu_usage,
-          permissions: ["read", "write"], // 권한 정보는 추후 API에서 제공될 예정
-        })
-      } else {
-        // 메트릭을 불러오지 못한 경우에도 기본 정보는 표시
-        usersWithMetrics.push({
-          id: user.user_id,
-          code: user.user_code,
-          permissions: ["read", "write"],
+        metricsResult.data.forEach((metric: any) => {
+          metricsMap.set(metric.environment_id, {
+            cpu: metric.cpu,
+            memory: metric.memory,
+          })
         })
       }
-    }
 
-    setAccounts(usersWithMetrics)
-    setIsLoading(false)
-  }
+      // 환경 목록에 메트릭 데이터 추가
+      const envsWithMetrics: EnvironmentWithMetrics[] = (envListResult.data || []).map((env) => {
+        const metrics = metricsMap.get(env.id)
+        return {
+          ...env,
+          cpu: metrics?.cpu,
+          memory: metrics?.memory,
+        }
+      })
 
-  const handleStopPod = async (targetUserId: string) => {
-    const currentUserId = localStorage.getItem("userId")
-    if (!currentUserId) return
-
-    const result = await stopPod(currentUserId, targetUserId)
-
-    if (result.success) {
-      alert("Pod가 중지되었습니다.")
-      loadUserAccounts() // 데이터 새로고침
-    } else {
-      alert(result.error || "Pod 중지에 실패했습니다")
-    }
-  }
-
-  const handleRestartPod = async (targetUserId: string) => {
-    const currentUserId = localStorage.getItem("userId")
-    if (!currentUserId) return
-
-    const result = await restartPod(currentUserId, targetUserId)
-
-    if (result.success) {
-      alert("Pod가 재시작되었습니다.")
-      loadUserAccounts() // 데이터 새로고침
-    } else {
-      alert(result.error || "Pod 재시작에 실패했습니다")
+      setEnvironments(envsWithMetrics)
+    } catch (err) {
+      setError("환경 정보를 불러오는 중 오류가 발생했습니다")
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleDeletePod = async (targetUserId: string) => {
-    if (!confirm("정말로 이 Pod를 삭제하시겠습니까?")) return
+  const handleAction = async (environmentId: number, action: "stop" | "restart" | "delete", envName: string) => {
+    const confirmMessages = {
+      stop: "정말로 이 환경을 중지하시겠습니까?",
+      restart: "정말로 이 환경을 재시작하시겠습니까?",
+      delete: "정말로 이 환경을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+    }
 
-    const currentUserId = localStorage.getItem("userId")
-    if (!currentUserId) return
+    if (!confirm(`${envName}: ${confirmMessages[action]}`)) return
 
-    const result = await deletePod(currentUserId, targetUserId)
+    const result = await environmentAction(environmentId, action)
 
     if (result.success) {
-      alert("Pod가 삭제되었습니다.")
-      loadUserAccounts() // 데이터 새로고침
+      alert(`환경이 ${action === "stop" ? "중지" : action === "restart" ? "재시작" : "삭제"}되었습니다.`)
+      loadEnvironments() // 데이터 새로고침
     } else {
-      alert(result.error || "Pod 삭제에 실패했습니다")
+      alert(result.error || `환경 ${action} 작업에 실패했습니다`)
     }
   }
 
@@ -138,11 +104,25 @@ export default function AdminMonitorPage() {
     router.push("/")
   }
 
-  const filteredAccounts = accounts.filter(
-    (account) =>
-      account.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      account.code.toLowerCase().includes(searchTerm.toLowerCase()),
+  const filteredEnvironments = environments.filter(
+    (env) =>
+      env.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      env.user_id.toString().includes(searchTerm) ||
+      env.k8s_namespace.toLowerCase().includes(searchTerm.toLowerCase()),
   )
+
+  const formatMemory = (mb?: number) => {
+    if (!mb) return "-"
+    if (mb >= 1024) {
+      return `${(mb / 1024).toFixed(2)} GB`
+    }
+    return `${mb.toFixed(0)} MB`
+  }
+
+  const formatCpu = (millicores?: number) => {
+    if (!millicores) return "-"
+    return `${millicores}m`
+  }
 
   if (!mounted) {
     return null
@@ -158,7 +138,7 @@ export default function AdminMonitorPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
               </svg>
             </Button>
-            <h1 className="text-xl font-bold">계정 모니터링</h1>
+            <h1 className="text-xl font-bold">환경 모니터링</h1>
           </div>
           <Button variant="ghost" onClick={handleLogout}>
             로그아웃
@@ -171,15 +151,15 @@ export default function AdminMonitorPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>사용자 계정 검색</CardTitle>
-                <Button onClick={loadUserAccounts} variant="outline" size="sm" disabled={isLoading}>
+                <CardTitle>환경 검색</CardTitle>
+                <Button onClick={loadEnvironments} variant="outline" size="sm" disabled={isLoading}>
                   {isLoading ? "로딩 중..." : "새로고침"}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               <Input
-                placeholder="ID 또는 코드로 검색..."
+                placeholder="환경 이름, 사용자 ID 또는 네임스페이스로 검색..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="max-w-md"
@@ -202,76 +182,79 @@ export default function AdminMonitorPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>사용자 계정 현황 ({filteredAccounts.length}개)</CardTitle>
+              <CardTitle>환경 현황 ({filteredEnvironments.length}개)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>코드</TableHead>
-                      <TableHead>노드 이름</TableHead>
-                      <TableHead>IP</TableHead>
-                      <TableHead>포트</TableHead>
-                      <TableHead>CPU 사용률</TableHead>
-                      <TableHead>권한</TableHead>
+                      <TableHead>환경 ID</TableHead>
+                      <TableHead>환경 이름</TableHead>
+                      <TableHead>사용자 ID</TableHead>
+                      <TableHead>네임스페이스</TableHead>
+                      <TableHead>상태</TableHead>
+                      <TableHead>CPU</TableHead>
+                      <TableHead>메모리</TableHead>
+                      <TableHead>접속 URL</TableHead>
                       <TableHead className="text-center">작업</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                           로딩 중...
                         </TableCell>
                       </TableRow>
-                    ) : filteredAccounts.length > 0 ? (
-                      filteredAccounts.map((account, index) => (
-                        <TableRow key={index}>
-                          <TableCell className="font-medium">{account.id}</TableCell>
+                    ) : filteredEnvironments.length > 0 ? (
+                      filteredEnvironments.map((env) => (
+                        <TableRow key={env.id}>
+                          <TableCell className="font-medium">{env.id}</TableCell>
+                          <TableCell>{env.name}</TableCell>
                           <TableCell>
-                            <span className="font-mono text-sm bg-secondary px-2 py-1 rounded">{account.code}</span>
+                            <span className="font-mono text-sm bg-secondary px-2 py-1 rounded">{env.user_id}</span>
                           </TableCell>
-                          <TableCell>{account.nodeName || "-"}</TableCell>
-                          <TableCell className="font-mono text-sm">{account.ip || "-"}</TableCell>
-                          <TableCell>{account.port || "-"}</TableCell>
+                          <TableCell className="font-mono text-sm">{env.k8s_namespace}</TableCell>
                           <TableCell>
-                            {account.cpuUsage !== undefined ? (
-                              <div className="flex items-center gap-2">
-                                <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden max-w-[60px]">
-                                  <div
-                                    className={`h-full rounded-full ${
-                                      account.cpuUsage > 70
-                                        ? "bg-red-500"
-                                        : account.cpuUsage > 50
-                                          ? "bg-yellow-500"
-                                          : "bg-accent"
-                                    }`}
-                                    style={{ width: `${account.cpuUsage}%` }}
-                                  />
-                                </div>
-                                <span className="text-sm font-medium">{account.cpuUsage}%</span>
-                              </div>
+                            <span
+                              className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
+                                env.status === "running"
+                                  ? "bg-green-100 text-green-800"
+                                  : env.status === "pending"
+                                    ? "bg-yellow-100 text-yellow-800"
+                                    : env.status === "error"
+                                      ? "bg-red-100 text-red-800"
+                                      : "bg-gray-100 text-gray-800"
+                              }`}
+                            >
+                              {env.status}
+                            </span>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">{formatCpu(env.cpu)}</TableCell>
+                          <TableCell className="font-mono text-sm">{formatMemory(env.memory)}</TableCell>
+                          <TableCell>
+                            {env.access_url ? (
+                              <a
+                                href={env.access_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary hover:underline text-sm"
+                              >
+                                접속
+                              </a>
                             ) : (
-                              "-"
+                              <span className="text-muted-foreground text-sm">-</span>
                             )}
                           </TableCell>
                           <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {account.permissions.map((permission) => (
-                                <span
-                                  key={permission}
-                                  className="inline-flex items-center px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-medium"
-                                >
-                                  {permission === "read" ? "읽기" : "쓰기"}
-                                </span>
-                              ))}
-                            </div>
-                          </TableCell>
-                          <TableCell>
                             <div className="flex items-center justify-center gap-1">
-                              <Button variant="ghost" size="sm" onClick={() => handleStopPod(account.id)} title="중지">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleAction(env.id, "stop", env.name)}
+                                title="중지"
+                              >
                                 <svg
                                   className="w-4 h-4"
                                   fill="none"
@@ -289,7 +272,7 @@ export default function AdminMonitorPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleRestartPod(account.id)}
+                                onClick={() => handleAction(env.id, "restart", env.name)}
                                 title="재시작"
                               >
                                 <svg
@@ -309,7 +292,7 @@ export default function AdminMonitorPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleDeletePod(account.id)}
+                                onClick={() => handleAction(env.id, "delete", env.name)}
                                 title="삭제"
                                 className="text-destructive hover:text-destructive"
                               >
@@ -333,7 +316,7 @@ export default function AdminMonitorPage() {
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                           검색 결과가 없습니다
                         </TableCell>
                       </TableRow>

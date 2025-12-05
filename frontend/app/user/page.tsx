@@ -49,7 +49,8 @@ export default function UserHomePage() {
     }
 
     try {
-      const response = await fetch("/api/v1/auth/my-environment", {
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
+      const response = await fetch(`${API_BASE_URL}/auth/my-environment`, {
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",

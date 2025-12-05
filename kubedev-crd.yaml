@@ -1,0 +1,38 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kubedevenvironments.kubedev.my-project.com
+spec:
+  group: kubedev.my-project.com
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                userName:
+                  type: string
+                gitRepository:
+                  type: string
+                template:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+              required:
+                - userName
+                - gitRepository
+                - template
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+  scope: Namespaced
+  names:
+    plural: kubedevenvironments
+    singular: kubedevenvironment
+    kind: KubeDevEnvironment
+    shortNames:
+      - kubdev

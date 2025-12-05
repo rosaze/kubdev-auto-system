@@ -8,10 +8,13 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import structlog
+import yaml
 
 from app.models.environment import EnvironmentInstance, EnvironmentStatus
 from app.models.project_template import ProjectTemplate
+from app.models.user import User
 from app.services.kubernetes_service import KubernetesService
+from app.services.notification_service import notification_service
 from app.core.config import settings
 
 
@@ -307,6 +310,14 @@ echo "📁 작업 경로: /workspace"
             environment.status_message = "Environment stopped - scaled down to 0"
             self.db.commit()
             log.info("Environment stopped successfully")
+            
+            # 슬랙 알림 전송
+            try:
+                message = f"✅ 환경 중지: '{environment.name}' (ID: {environment.id}, 사용자: {environment.user.name})이(가) 중지되었습니다."
+                await notification_service.send_slack_notification(message)
+            except Exception as notify_error:
+                log.error("Failed to send Slack notification for stop event", error=str(notify_error))
+
             return {"message": "Environment stopped successfully - scaled down to 0"}
 
         except Exception as e:
@@ -378,6 +389,13 @@ echo "📁 작업 경로: /workspace"
             log.info("Deleting entire namespace to clean up all resources", namespace=environment.k8s_namespace)
             await self.k8s_service.delete_namespace(environment.k8s_namespace)
 
+            # 슬랙 알림 전송 (DB에서 삭제되기 전에 정보 사용)
+            try:
+                message = f"🗑️ 환경 삭제: '{environment.name}' (ID: {environment.id}, 사용자: {environment.user.name})이(가) 영구적으로 삭제되었습니다."
+                await notification_service.send_slack_notification(message)
+            except Exception as notify_error:
+                log.error("Failed to send Slack notification for delete event", error=str(notify_error))
+
             # 데이터베이스에서 환경 기록 삭제
             log.info("Deleting environment from database")
             self.db.delete(environment)
@@ -388,3 +406,124 @@ echo "📁 작업 경로: /workspace"
         except Exception as e:
             log.error("Failed to delete environment", error=str(e), exc_info=True)
             raise Exception(f"Failed to delete environment: {str(e)}")
+
+    async def create_environment_from_yaml(
+        self,
+        template_id: int,
+        user: User,
+        yaml_content: bytes
+    ) -> Dict[str, Any]:
+        """
+        YAML 파일로 환경 생성 (재사용 가능한 공통 함수)
+
+        Args:
+            template_id: 템플릿 ID
+            user: 사용자 객체
+            yaml_content: YAML 파일 바이트 내용
+
+        Returns:
+            환경 생성 결과 (environment_id, status 등)
+        """
+        log = self.log.bind(user_id=user.id, template_id=template_id)
+        log.info("Creating environment from YAML")
+
+        # 1. 템플릿 존재 확인
+        template = self.db.query(ProjectTemplate).filter(
+            ProjectTemplate.id == template_id
+        ).first()
+
+        if not template:
+            log.warning("Template not found", template_id=template_id)
+            raise Exception(f"ProjectTemplate with id {template_id} not found.")
+
+        # 2. YAML 파일 디코딩
+        try:
+            yaml_string = yaml_content.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                yaml_string = yaml_content.decode("cp949")
+                log.info("Decoded YAML file using cp949 encoding as a fallback.")
+            except UnicodeDecodeError:
+                log.error("Failed to decode YAML file with both utf-8 and cp949.", exc_info=True)
+                raise Exception("Could not decode file. Please ensure it is saved with UTF-8 or CP949 encoding.")
+
+        # 3. YAML 파싱 및 검증
+        try:
+            custom_object = yaml.safe_load(yaml_string)
+            if not isinstance(custom_object, dict):
+                raise Exception("Invalid YAML format: not a dictionary.")
+
+            api_version = custom_object.get("apiVersion")
+            kind = custom_object.get("kind")
+            if api_version != "kubedev.my-project.com/v1alpha1" or kind != "KubeDevEnvironment":
+                raise Exception("Invalid YAML: apiVersion or kind does not match KubeDevEnvironment CRD.")
+
+            # userName 주입/덮어쓰기 (보안을 위해)
+            # Kubernetes 호환성을 위해 sanitize
+            import re
+            import unicodedata
+
+            def sanitize_for_k8s(name: str) -> str:
+                """Kubernetes RFC 1123 호환 이름으로 변환"""
+                normalized = unicodedata.normalize('NFKD', name)
+                ascii_str = normalized.encode('ASCII', 'ignore').decode('ASCII')
+                sanitized = ascii_str.replace(' ', '-').lower()
+                sanitized = re.sub(r'[^a-z0-9-]', '', sanitized)
+                sanitized = re.sub(r'-+', '-', sanitized).strip('-')
+                if not sanitized or not sanitized[0].isalnum():
+                    sanitized = f"user-{user.id}"
+                return sanitized[:63]
+
+            if "spec" not in custom_object:
+                custom_object["spec"] = {}
+
+            # 원래 이름과 sanitize된 이름 모두 저장
+            sanitized_name = sanitize_for_k8s(user.name)
+            custom_object["spec"]["userName"] = sanitized_name
+            log.info(f"Injected/overwrote userName '{user.name}' -> '{sanitized_name}' into CRD spec.")
+
+            # metadata.name을 고유하게 변경 (user_id 기반)
+            if "metadata" not in custom_object:
+                custom_object["metadata"] = {}
+            unique_crd_name = f"env-user-{user.id}"
+            custom_object["metadata"]["name"] = unique_crd_name
+            log.info(f"Generated unique CRD name: {unique_crd_name}")
+
+        except yaml.YAMLError as e:
+            raise Exception(f"YAML parsing error: {str(e)}")
+
+        # 4. Kubernetes에 CRD 적용
+        try:
+            api_response = await self.k8s_service.create_custom_object(custom_object)
+            log.info("Successfully applied KubeDevEnvironment CRD to Kubernetes.",
+                    crd_name=custom_object.get("metadata", {}).get("name"))
+
+            # 5. DB에 환경 레코드 생성
+            env_name = custom_object.get("metadata", {}).get("name")
+            environment = EnvironmentInstance(
+                name=env_name,
+                template_id=template_id,
+                user_id=user.id,
+                k8s_namespace=custom_object.get("metadata", {}).get("namespace", "default"),
+                k8s_deployment_name=env_name,
+                status=EnvironmentStatus.CREATING,
+                git_repository=custom_object.get("spec", {}).get("gitRepository")
+            )
+            self.db.add(environment)
+            self.db.commit()
+            self.db.refresh(environment)
+            log.info("Environment DB instance created for tracking.", environment_id=environment.id)
+
+            return {
+                "status": "success",
+                "message": "KubeDevEnvironment custom resource created successfully.",
+                "environment_id": environment.id,
+                "crd_name": custom_object.get("metadata", {}).get("name"),
+                "namespace": custom_object.get("metadata", {}).get("namespace", "default"),
+                "environment_status": environment.status.value
+            }
+
+        except Exception as e:
+            log.error("Failed to apply CRD to Kubernetes or create DB record", error=str(e), exc_info=True)
+            self.db.rollback()
+            raise Exception(f"Failed to create environment: {str(e)}")

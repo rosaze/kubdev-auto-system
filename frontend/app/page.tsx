@@ -27,6 +27,7 @@ export default function LoginPage() {
       localStorage.setItem("userId", result.data.user_id.toString())
       localStorage.setItem("userType", result.data.user_type)
       localStorage.setItem("userName", result.data.name)
+      localStorage.setItem("token", result.data.token)
 
       const destination = result.data.user_type === "admin" ? "/admin" : "/user"
       router.push(destination)

@@ -143,20 +143,45 @@ async def list_environments(
     offset = (page - 1) * size
     environments = query.offset(offset).limit(size).all()
 
-    # IDE URL 동적 생성 (CRD status에서 읽거나 minikube service URL 생성)
+    # IDE URL 동적 생성 (Kubernetes API로 실제 접속 가능한 주소 생성)
     k8s_service = KubernetesService()
     for env in environments:
-        if env.status == EnvironmentStatus.RUNNING and not env.access_url:
+        if env.status == EnvironmentStatus.RUNNING:
             try:
                 # CRD status에서 ideUrl 읽기
                 crd_name = env.k8s_deployment_name
-                crd_namespace = "kubdev-users"
-                custom_obj = await k8s_service.get_custom_object(
-                    "kubedev.my-project.com", "v1alpha1", crd_namespace, "kubedevenvironments", crd_name
-                )
-                env.access_url = custom_obj.get("status", {}).get("ideUrl") or env.access_url
+                crd_namespace = env.k8s_namespace
+
+                try:
+                    custom_obj = await k8s_service.get_custom_object(
+                        "kubedev.my-project.com", "v1alpha1", crd_namespace, "kubedevenvironments", crd_name
+                    )
+                    ide_url = custom_obj.get("status", {}).get("ideUrl")
+                    log.info("Retrieved IDE URL from CRD", env_id=env.id, ide_url=ide_url)
+
+                    # ideUrl이 비어있거나 .local 도메인인 경우 NodePort URL 생성
+                    if not ide_url or ".local" in ide_url:
+                        log.info("Attempting to generate NodePort URL", env_id=env.id)
+                        # 서비스 이름은 Controller가 "ide-<crd-name>" 형식으로 생성
+                        service_name = f"ide-{crd_name}"
+                        # CRD status에서 실제 namespace 가져오기
+                        actual_namespace = custom_obj.get("status", {}).get("namespace") or crd_namespace
+                        log.info("Service info", service=service_name, namespace=actual_namespace)
+
+                        # Kubernetes API로 NodePort URL 가져오기
+                        nodeport_url = await k8s_service.get_nodeport_url(service_name, actual_namespace)
+                        log.info("NodePort URL result", env_id=env.id, url=nodeport_url)
+                        if nodeport_url:
+                            env.access_url = nodeport_url
+                        elif ide_url:
+                            # fallback to original ideUrl if present
+                            env.access_url = ide_url
+                    else:
+                        env.access_url = ide_url
+                except Exception as e:
+                    log.warning("Failed to get IDE URL from CRD", env_id=env.id, error=str(e))
             except Exception as e:
-                log.warning("Failed to get CRD status for IDE URL", env_id=env.id, error=str(e))
+                log.warning("Failed to generate access URL", env_id=env.id, error=str(e))
 
     log.info("Found environments", total=total, page_count=len(environments))
     return EnvironmentListResponse(
