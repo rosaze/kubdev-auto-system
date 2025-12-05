@@ -157,54 +157,27 @@ async def list_environments(
                         "kubedev.my-project.com", "v1alpha1", crd_namespace, "kubedevenvironments", crd_name
                     )
                     ide_url = custom_obj.get("status", {}).get("ideUrl")
+                    log.info("Retrieved IDE URL from CRD", env_id=env.id, ide_url=ide_url)
 
-                    if ide_url:
-                        # ideUrl이 .local 도메인인 경우 minikube tunnel URL로 변환
-                        if ".local" in ide_url:
-                            # 서비스 이름은 Controller가 "ide-<crd-name>" 형식으로 생성
-                            service_name = f"ide-{crd_name}"
+                    # ideUrl이 비어있거나 .local 도메인인 경우 NodePort URL 생성
+                    if not ide_url or ".local" in ide_url:
+                        log.info("Attempting to generate NodePort URL", env_id=env.id)
+                        # 서비스 이름은 Controller가 "ide-<crd-name>" 형식으로 생성
+                        service_name = f"ide-{crd_name}"
+                        # CRD status에서 실제 namespace 가져오기
+                        actual_namespace = custom_obj.get("status", {}).get("namespace") or crd_namespace
+                        log.info("Service info", service=service_name, namespace=actual_namespace)
 
-                            # kubectl 명령으로 minikube service tunnel URL 가져오기
-                            import subprocess
-                            result = subprocess.run(
-                                ["kubectl", "get", "svc", service_name, "-n", crd_namespace,
-                                 "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}"],
-                                capture_output=True,
-                                text=True,
-                                timeout=3
-                            )
-
-                            # 일반적으로 minikube는 LoadBalancer가 아닌 NodePort를 사용하므로
-                            # 대신 NodePort를 가져오고 minikube IP와 결합
-                            if not result.stdout.strip():
-                                # NodePort와 minikube IP로 URL 구성
-                                nodeport_result = subprocess.run(
-                                    ["kubectl", "get", "svc", service_name, "-n", crd_namespace,
-                                     "-o", "jsonpath={.spec.ports[0].nodePort}"],
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=3
-                                )
-
-                                minikube_ip_result = subprocess.run(
-                                    ["kubectl", "get", "node", "-o", "jsonpath={.items[0].status.addresses[?(@.type=='InternalIP')].address}"],
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=3
-                                )
-
-                                if nodeport_result.stdout.strip() and minikube_ip_result.stdout.strip():
-                                    nodeport = nodeport_result.stdout.strip()
-                                    minikube_ip = minikube_ip_result.stdout.strip()
-                                    env.access_url = f"http://{minikube_ip}:{nodeport}"
-                                    log.info("Generated NodePort URL", env_id=env.id, url=env.access_url)
-                                else:
-                                    # fallback to original ideUrl
-                                    env.access_url = ide_url
-                            else:
-                                env.access_url = f"http://{result.stdout.strip()}"
-                        else:
+                        # Kubernetes API로 NodePort URL 가져오기
+                        nodeport_url = await k8s_service.get_nodeport_url(service_name, actual_namespace)
+                        log.info("NodePort URL result", env_id=env.id, url=nodeport_url)
+                        if nodeport_url:
+                            env.access_url = nodeport_url
+                        elif ide_url:
+                            # fallback to original ideUrl if present
                             env.access_url = ide_url
+                    else:
+                        env.access_url = ide_url
                 except Exception as e:
                     log.warning("Failed to get IDE URL from CRD", env_id=env.id, error=str(e))
             except Exception as e:

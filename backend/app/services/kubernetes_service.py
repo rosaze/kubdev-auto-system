@@ -479,3 +479,37 @@ class KubernetesService:
         except Exception as e:
             log.error("An unexpected error occurred while getting custom object", name=name, error=str(e), exc_info=True)
             raise e
+
+    async def get_nodeport_url(self, service_name: str, namespace: str) -> str:
+        """Get service URL for both NodePort and ClusterIP services (with port-forwarding)"""
+        self._check_k8s_availability()
+        try:
+            # Get service to extract port information
+            service = self.v1.read_namespaced_service(service_name, namespace)
+
+            # Get first port
+            if not service.spec.ports or len(service.spec.ports) == 0:
+                log.warning("Service has no ports", service=service_name, namespace=namespace)
+                return None
+
+            # Handle based on service type
+            if service.spec.type == "NodePort":
+                # For NodePort, use the NodePort number
+                node_port = service.spec.ports[0].node_port
+                url = f"http://localhost:{node_port}"
+                log.info("Generated NodePort URL", service=service_name, namespace=namespace, url=url, note="Using localhost - requires port forwarding")
+                return url
+            else:
+                # For ClusterIP and other types, use the service port
+                # This requires kubectl port-forward to work
+                service_port = service.spec.ports[0].port
+                url = f"http://localhost:{service_port}"
+                log.info("Generated ClusterIP URL", service=service_name, namespace=namespace, url=url, service_type=service.spec.type, note="Using localhost - requires kubectl port-forward")
+                return url
+
+        except ApiException as e:
+            log.warning("Failed to get service URL", service=service_name, namespace=namespace, error=str(e))
+            return None
+        except Exception as e:
+            log.warning("Unexpected error getting service URL", service=service_name, namespace=namespace, error=str(e))
+            return None
