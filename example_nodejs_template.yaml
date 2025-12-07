@@ -9,7 +9,8 @@ spec:
   userName: "example-student"
 
   # Git 레포지토리
-  gitRepository: "https://github.com/your-org/react-starter.git"
+  gitRepository: "https://github.com/rosaze/kubdev-auto-system.git"
+  gitRef: "main"
 
   # Docker 이미지 (Node.js + code-server)
   image: "codercom/code-server:latest"
