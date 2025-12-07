@@ -182,6 +182,17 @@ echo "📁 작업 경로: /workspace"
             self.db.commit()
             log.info("Environment deployment successful, waiting for ready state")
 
+            # 생성 성공 슬랙 알림 (웹훅 오류가 배포를 실패시키지 않도록 보호)
+            try:
+                message = (
+                    f"🎉 환경 생성: '{environment.name}' "
+                    f"(ID: {environment.id}, 사용자: {environment.user.name})이(가) 준비되었습니다. "
+                    f"접속: {environment.access_url}"
+                )
+                await notification_service.send_slack_notification(message)
+            except Exception as notify_error:
+                log.error("Failed to send Slack notification for create event", error=str(notify_error))
+
             asyncio.create_task(self._wait_for_deployment_ready(environment_id))
 
             return {

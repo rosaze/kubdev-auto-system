@@ -3,7 +3,8 @@ User API Endpoints
 사용자 관련 API 엔드포인트
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 import logging
@@ -11,6 +12,8 @@ import os
 import structlog
 import re
 import unicodedata
+import json
+import asyncio
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
@@ -429,3 +432,132 @@ async def create_user_with_environment(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"사용자 및 환경 생성 실패: {str(e)}"
         )
+
+@router.get("/user-with-environment/stream")
+async def create_user_with_environment_stream(
+    name: str = Query(..., description="사용자 이름"),
+    template_id: int = Query(..., description="템플릿 ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    사용자 생성 + 개발 환경 자동 생성 (실시간 로그 스트리밍)
+
+    Server-Sent Events를 사용하여 환경 생성 과정을 실시간으로 전송합니다.
+    """
+    async def event_generator():
+        log = structlog.get_logger(__name__)
+
+        try:
+            # 1. 사용자 생성 시작
+            yield f"data: {json.dumps({'status': 'user_creating', 'message': '👤 사용자 계정 생성 중...'})}\n\n"
+
+            access_code = generate_access_code()
+            max_attempts = 10
+            for _ in range(max_attempts):
+                existing = db.query(User).filter(User.hashed_password == access_code).first()
+                if not existing:
+                    break
+                access_code = generate_access_code()
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'message': '❌ 접속 코드 생성 실패'})}\n\n"
+                return
+
+            user = User(
+                name=name,
+                role=UserRole.USER,
+                hashed_password=access_code,
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+            yield f"data: {json.dumps({'status': 'user_created', 'message': f'✅ 사용자 생성 완료 (ID: {user.id}, 접속코드: {access_code})'})}\n\n"
+            log.info("User created successfully", user_id=user.id, access_code=access_code)
+
+            # 2. YAML 파일 로드
+            yield f"data: {json.dumps({'status': 'loading_template', 'message': '📄 템플릿 파일 로드 중...'})}\n\n"
+
+            yaml_filename = TEMPLATE_YAML_MAP.get(template_id)
+            if not yaml_filename:
+                db.rollback()
+                yield f"data: {json.dumps({'status': 'error', 'message': '❌ 템플릿 파일을 찾을 수 없습니다'})}\n\n"
+                return
+
+            yaml_file_path = os.path.join(os.getcwd(), yaml_filename)
+            if not os.path.exists(yaml_file_path):
+                db.rollback()
+                yield f"data: {json.dumps({'status': 'error', 'message': f'❌ YAML 파일 없음: {yaml_filename}'})}\n\n"
+                return
+
+            with open(yaml_file_path, 'rb') as f:
+                yaml_content = f.read()
+
+            yield f"data: {json.dumps({'status': 'template_loaded', 'message': f'✅ 템플릿 로드 완료: {yaml_filename}'})}\n\n"
+
+            # 3. Kubernetes CRD 생성
+            yield f"data: {json.dumps({'status': 'creating_crd', 'message': '☸️  Kubernetes CRD 생성 중...'})}\n\n"
+
+            env_service = EnvironmentService(db, log)
+            result = await env_service.create_environment_from_yaml(
+                template_id=template_id,
+                user=user,
+                yaml_content=yaml_content
+            )
+
+            env_id = result["environment_id"]
+            yield f"data: {json.dumps({'status': 'crd_created', 'message': f'✅ CRD 생성 완료 (환경 ID: {env_id})'})}\n\n"
+
+            # 4. Pod 상태 확인 (최대 60초 대기)
+            yield f"data: {json.dumps({'status': 'waiting_pod', 'message': '⏳ Pod 생성 대기 중...'})}\n\n"
+            
+            k8s_service = KubernetesService()
+            namespace = f"kubedev-{user.name.lower()}-env-user-{user.id}"
+            
+            for i in range(60):
+                await asyncio.sleep(1)
+                try:
+                    # Pod 상태 확인
+                    pods = k8s_service.core_api.list_namespaced_pod(namespace=namespace)
+                    if pods.items:
+                        pod = pods.items[0]
+                        phase = pod.status.phase
+                        
+                        if phase == "Pending":
+                            yield f"data: {json.dumps({'status': 'pod_pending', 'message': f'⏳ Pod 시작 중... ({i+1}초)'})}\n\n"
+                        elif phase == "Running":
+                            yield f"data: {json.dumps({'status': 'pod_running', 'message': '🚀 Pod 실행 중!'})}\n\n"
+                            
+                            # Service URL 확인
+                            services = k8s_service.core_api.list_namespaced_service(namespace=namespace)
+                            if services.items:
+                                svc = services.items[0]
+                                # NodePort 또는 ClusterIP 정보 추출
+                                port = svc.spec.ports[0].node_port if svc.spec.type == "NodePort" else svc.spec.ports[0].port
+                                url = f"http://localhost:{port}"
+                                
+                                yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id, 'url': url})}\n\n"
+                                return
+                            else:
+                                yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
+                                return
+                        elif phase == "Failed":
+                            yield f"data: {json.dumps({'status': 'error', 'message': '❌ Pod 시작 실패'})}\n\n"
+                            return
+                except Exception as e:
+                    # Namespace가 아직 없을 수 있음
+                    if i < 10:
+                        yield f"data: {json.dumps({'status': 'waiting_namespace', 'message': f'⏳ Namespace 생성 대기 중... ({i+1}초)'})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'status': 'error', 'message': f'❌ Pod 확인 실패: {str(e)}'})}\n\n"
+                        return
+            
+            # 타임아웃
+            yield f"data: {json.dumps({'status': 'timeout', 'message': '⏱️ 타임아웃: Pod 시작 대기 시간 초과', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
+
+        except Exception as e:
+            db.rollback()
+            log.error("Failed to create user with environment", error=str(e), exc_info=True)
+            yield f"data: {json.dumps({'status': 'error', 'message': f'❌ 생성 실패: {str(e)}'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
