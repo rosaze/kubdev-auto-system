@@ -8,6 +8,7 @@ metadata:
 spec:
   userName: "demo-student"
   gitRepository: "https://github.com/octocat/Hello-World.git"
+  gitRef: "master"
   image: "codercom/code-server:latest"
 
   commands:

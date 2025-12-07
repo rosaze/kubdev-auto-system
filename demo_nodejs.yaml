@@ -7,6 +7,7 @@ spec:
   userName: "demo-student"
 
   gitRepository: "https://github.com/vercel/next.js.git"
+  gitRef: "canary"
 
   image: "codercom/code-server:latest"
 
