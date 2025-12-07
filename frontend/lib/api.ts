@@ -390,3 +390,57 @@ export async function createUserWithEnvironment(
     return { success: false, error: "서버와 통신할 수 없습니다" };
   }
 }
+
+// Server-Sent Events를 사용한 실시간 환경 생성
+export interface StreamEvent {
+  status: string;
+  message: string;
+  user_id?: number;
+  access_code?: string;
+  environment_id?: number;
+  url?: string;
+}
+
+export function createUserWithEnvironmentStream(
+  userName: string,
+  templateId: number,
+  onMessage: (event: StreamEvent) => void,
+  onComplete: (data: { user_id: number; access_code: string; environment_id: number; url?: string }) => void,
+  onError: (error: string) => void
+): () => void {
+  const eventSource = new EventSource(
+    `${API_BASE_URL}/users/user-with-environment/stream?name=${encodeURIComponent(userName)}&template_id=${templateId}`
+  );
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data: StreamEvent = JSON.parse(event.data);
+
+      if (data.status === 'error') {
+        onError(data.message);
+        eventSource.close();
+      } else if (data.status === 'completed' || data.status === 'timeout') {
+        if (data.user_id && data.access_code && data.environment_id) {
+          onComplete({
+            user_id: data.user_id,
+            access_code: data.access_code,
+            environment_id: data.environment_id,
+            url: data.url
+          });
+        }
+        eventSource.close();
+      } else {
+        onMessage(data);
+      }
+    } catch (e) {
+      console.error('Failed to parse SSE message:', e);
+    }
+  };
+
+  eventSource.onerror = () => {
+    onError('서버 연결이 끊어졌습니다');
+    eventSource.close();
+  };
+
+  return () => eventSource.close();
+}

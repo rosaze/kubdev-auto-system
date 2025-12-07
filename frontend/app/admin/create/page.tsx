@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { createAdminAccount, createUserAccount, createUserWithEnvironment } from "@/lib/api"
+import { createAdminAccount, createUserAccount, createUserWithEnvironmentStream, type StreamEvent } from "@/lib/api"
 
 export default function AdminCreatePage() {
   const router = useRouter()
@@ -25,6 +25,9 @@ export default function AdminCreatePage() {
 
   const [isCreating, setIsCreating] = useState(false)
   const [createError, setCreateError] = useState("")
+  const [logs, setLogs] = useState<string[]>([])
+  const [showLogs, setShowLogs] = useState(false)
+  const closeStreamRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -72,22 +75,36 @@ export default function AdminCreatePage() {
 
     setIsCreating(true)
     setCreateError("")
+    setLogs([])
+    setShowLogs(true)
 
-    // 새로운 통합 엔드포인트 사용: 사용자 + 환경 자동 생성
-    const result = await createUserWithEnvironment(userId.trim(), selectedTemplate)
+    // SSE를 사용한 실시간 로그 스트리밍
+    const closeStream = createUserWithEnvironmentStream(
+      userId.trim(),
+      selectedTemplate,
+      (event: StreamEvent) => {
+        // 실시간 로그 메시지 추가
+        setLogs(prev => [...prev, event.message])
+      },
+      (data) => {
+        // 완료 시
+        setLogs(prev => [...prev, '✅ 모든 작업 완료!'])
+        setGeneratedAccount({
+          type: "user",
+          code: data.access_code,
+          userId: userId.trim(),
+          environmentId: data.environment_id,
+        })
+        setIsCreating(false)
+      },
+      (error) => {
+        // 에러 발생 시
+        setCreateError(error)
+        setIsCreating(false)
+      }
+    )
 
-    if (result.success && result.data) {
-      setGeneratedAccount({
-        type: "user",
-        code: result.data.access_code,
-        userId: userId.trim(),
-        environmentId: result.data.environment_id,
-      })
-    } else {
-      setCreateError(result.error || "계정 생성에 실패했습니다")
-    }
-
-    setIsCreating(false)
+    closeStreamRef.current = closeStream
   }
 
   const handleLogout = () => {
@@ -254,6 +271,31 @@ export default function AdminCreatePage() {
                 <Button className="w-full" size="lg" onClick={handleCreateUserAccount} disabled={isCreating}>
                   {isCreating ? "생성 중..." : "사용자 계정 + 환경 생성하기"}
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {showLogs && logs.length > 0 && (
+            <Card className="border-blue-500">
+              <CardHeader>
+                <CardTitle className="text-blue-600">실시간 생성 로그</CardTitle>
+                <CardDescription>환경 생성 과정을 실시간으로 확인하세요</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-black/90 text-green-400 p-4 rounded-lg font-mono text-sm max-h-96 overflow-y-auto space-y-1">
+                  {logs.map((log, index) => (
+                    <div key={index} className="flex items-start gap-2">
+                      <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span>
+                      <span>{log}</span>
+                    </div>
+                  ))}
+                  {isCreating && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-gray-400">처리 중...</span>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
