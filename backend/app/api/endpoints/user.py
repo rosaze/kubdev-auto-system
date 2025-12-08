@@ -508,26 +508,30 @@ async def create_user_with_environment_stream(
             env_id = result["environment_id"]
             yield f"data: {json.dumps({'status': 'crd_created', 'message': f'✅ CRD 생성 완료 (환경 ID: {env_id})'})}\n\n"
 
-            # 4. Pod 상태 확인 (최대 60초 대기)
+            # 4. Pod 상태 확인 (최대 90초 대기, 2초 간격)
             yield f"data: {json.dumps({'status': 'waiting_pod', 'message': '⏳ Pod 생성 대기 중...'})}\n\n"
-            
+
             k8s_service = KubernetesService()
             namespace = f"kubedev-{user.name.lower()}-env-user-{user.id}"
-            
-            for i in range(60):
-                await asyncio.sleep(1)
+
+            # Notification service import
+            from app.services.notification_service import notification_service
+
+            for i in range(45):  # 90초 / 2초 = 45번 체크
+                await asyncio.sleep(2)  # 2초마다 체크 (부하 감소)
                 try:
                     # Pod 상태 확인
                     pods = k8s_service.v1.list_namespaced_pod(namespace=namespace)
                     if pods.items:
                         pod = pods.items[0]
                         phase = pod.status.phase
-                        
+
                         if phase == "Pending":
-                            yield f"data: {json.dumps({'status': 'pod_pending', 'message': f'⏳ Pod 시작 중... ({i+1}초)'})}\n\n"
+                            if i % 5 == 0:  # 10초마다만 로그 출력
+                                yield f"data: {json.dumps({'status': 'pod_pending', 'message': f'⏳ Pod 시작 중... ({(i+1)*2}초)'})}\n\n"
                         elif phase == "Running":
                             yield f"data: {json.dumps({'status': 'pod_running', 'message': '🚀 Pod 실행 중!'})}\n\n"
-                            
+
                             # Service URL 확인
                             services = k8s_service.v1.list_namespaced_service(namespace=namespace)
                             if services.items:
@@ -535,10 +539,27 @@ async def create_user_with_environment_stream(
                                 # NodePort 또는 ClusterIP 정보 추출
                                 port = svc.spec.ports[0].node_port if svc.spec.type == "NodePort" else svc.spec.ports[0].port
                                 url = f"http://localhost:{port}"
-                                
+
+                                # 웹훅 알림 전송
+                                await notification_service.send_slack_notification(
+                                    f"🎉 개발 환경 생성 완료!\n"
+                                    f"• 사용자: {user.name}\n"
+                                    f"• 접속 코드: {access_code}\n"
+                                    f"• 환경 ID: {env_id}\n"
+                                    f"• URL: {url}"
+                                )
+
                                 yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id, 'url': url})}\n\n"
                                 return
                             else:
+                                # Service가 없어도 완료 처리
+                                await notification_service.send_slack_notification(
+                                    f"🎉 개발 환경 생성 완료!\n"
+                                    f"• 사용자: {user.name}\n"
+                                    f"• 접속 코드: {access_code}\n"
+                                    f"• 환경 ID: {env_id}"
+                                )
+
                                 yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
                                 return
                         elif phase == "Failed":
@@ -546,14 +567,13 @@ async def create_user_with_environment_stream(
                             return
                 except Exception as e:
                     # Namespace가 아직 없을 수 있음
-                    if i < 10:
-                        yield f"data: {json.dumps({'status': 'waiting_namespace', 'message': f'⏳ Namespace 생성 대기 중... ({i+1}초)'})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'status': 'error', 'message': f'❌ Pod 확인 실패: {str(e)}'})}\n\n"
-                        return
-            
-            # 타임아웃
-            yield f"data: {json.dumps({'status': 'timeout', 'message': '⏱️ 타임아웃: Pod 시작 대기 시간 초과', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
+                    if i < 5:  # 처음 10초만 대기 메시지
+                        yield f"data: {json.dumps({'status': 'waiting_namespace', 'message': f'⏳ Namespace 생성 대기 중... ({(i+1)*2}초)'})}\n\n"
+                    elif i % 10 == 0:  # 20초마다 상태 체크 로그
+                        yield f"data: {json.dumps({'status': 'checking', 'message': f'⏳ 환경 확인 중... ({(i+1)*2}초)'})}\n\n"
+
+            # 타임아웃 - 하지만 환경은 생성된 상태
+            yield f"data: {json.dumps({'status': 'timeout', 'message': '⏱️ Pod 시작 대기 시간 초과 (환경은 백그라운드에서 계속 생성 중)', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
 
         except Exception as e:
             db.rollback()
