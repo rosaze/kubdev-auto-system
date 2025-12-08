@@ -518,7 +518,7 @@ async def create_user_with_environment_stream(
                 await asyncio.sleep(1)
                 try:
                     # Pod 상태 확인
-                    pods = k8s_service.core_api.list_namespaced_pod(namespace=namespace)
+                    pods = k8s_service.v1.list_namespaced_pod(namespace=namespace)
                     if pods.items:
                         pod = pods.items[0]
                         phase = pod.status.phase
@@ -529,7 +529,7 @@ async def create_user_with_environment_stream(
                             yield f"data: {json.dumps({'status': 'pod_running', 'message': '🚀 Pod 실행 중!'})}\n\n"
                             
                             # Service URL 확인
-                            services = k8s_service.core_api.list_namespaced_service(namespace=namespace)
+                            services = k8s_service.v1.list_namespaced_service(namespace=namespace)
                             if services.items:
                                 svc = services.items[0]
                                 # NodePort 또는 ClusterIP 정보 추출

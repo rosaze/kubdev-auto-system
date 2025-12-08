@@ -497,15 +497,15 @@ class KubernetesService:
                 # For NodePort, use the NodePort number
                 node_port = service.spec.ports[0].node_port
                 url = f"http://localhost:{node_port}"
-                log.info("Generated NodePort URL", service=service_name, namespace=namespace, url=url, note="Using localhost - requires port forwarding")
+                log.info("Generated NodePort URL", service=service_name, namespace=namespace, url=url, node_port=node_port)
                 return url
             else:
-                # For ClusterIP and other types, use the service port
-                # This requires kubectl port-forward to work
+                # For ClusterIP services, we can't generate a reliable URL without knowing
+                # which port is being forwarded. Return a message indicating manual port-forward is needed.
+                log.info("ClusterIP service found - port-forward required", service=service_name, namespace=namespace, service_type=service.spec.type)
+                # Return kubectl port-forward command as placeholder
                 service_port = service.spec.ports[0].port
-                url = f"http://localhost:{service_port}"
-                log.info("Generated ClusterIP URL", service=service_name, namespace=namespace, url=url, service_type=service.spec.type, note="Using localhost - requires kubectl port-forward")
-                return url
+                return f"kubectl port-forward -n {namespace} svc/{service_name} 8080:{service_port}"
 
         except ApiException as e:
             log.warning("Failed to get service URL", service=service_name, namespace=namespace, error=str(e))
