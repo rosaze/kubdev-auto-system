@@ -14,6 +14,7 @@ class ProjectTemplateBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     version: str = Field(default="1.0.0", max_length=50)
+    organization_id: Optional[int] = None
 
 
 class ProjectTemplateCreate(ProjectTemplateBase):
@@ -42,6 +43,7 @@ class ProjectTemplateUpdate(BaseModel):
     description: Optional[str] = None
     version: Optional[str] = Field(None, max_length=50)
     status: Optional[TemplateStatus] = None
+    organization_id: Optional[int] = None
     stack_config: Optional[Dict[str, Any]] = None
     dependencies: Optional[List[str]] = None
     base_image: Optional[str] = None
@@ -73,6 +75,7 @@ class ProjectTemplateResponse(ProjectTemplateBase):
     git_branch: str
     is_public: bool
     created_by: int
+    organization_id: Optional[int]
     usage_count: int
     created_at: datetime
     updated_at: Optional[datetime]

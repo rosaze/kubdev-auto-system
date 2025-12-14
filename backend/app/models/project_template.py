@@ -63,6 +63,7 @@ class ProjectTemplate(Base):
 
     # 생성자 정보
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    organization_id = Column(Integer, nullable=True, index=True)  # 조직 ID
 
     # 사용 통계
     usage_count = Column(Integer, default=0)     # 사용된 횟수
