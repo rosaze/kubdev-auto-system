@@ -20,6 +20,7 @@ spec:
       containers:
       - name: frontend
         image: kubdev/frontend:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
