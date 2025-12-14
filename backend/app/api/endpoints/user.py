@@ -440,16 +440,25 @@ async def create_user_with_environment_stream(
     db: Session = Depends(get_db)
 ):
     """
-    사용자 생성 + 개발 환경 자동 생성 (실시간 로그 스트리밍)
+    사용자 생성 + 개발 환경 자동 생성 (실시간 로그 스트리밍) - MOCK VERSION
 
+    실제 Kubernetes 환경을 생성하지 않고, 미리 생성된 3개의 mock 환경 중 하나를 할당합니다.
     Server-Sent Events를 사용하여 환경 생성 과정을 실시간으로 전송합니다.
     """
     async def event_generator():
         log = structlog.get_logger(__name__)
 
+        # Mock 환경 매핑 (템플릿 ID -> 환경 ID)
+        MOCK_ENV_MAP = {
+            20: 22,  # Django Template -> Environment 22
+            21: 23,  # React Template -> Environment 23
+            22: 24,  # AI Study Template -> Environment 24
+        }
+
         try:
             # 1. 사용자 생성 시작
             yield f"data: {json.dumps({'status': 'user_creating', 'message': '👤 사용자 계정 생성 중...'})}\n\n"
+            await asyncio.sleep(0.5)  # 약간의 지연 효과
 
             access_code = generate_access_code()
             max_attempts = 10
@@ -474,110 +483,117 @@ async def create_user_with_environment_stream(
 
             yield f"data: {json.dumps({'status': 'user_created', 'message': f'✅ 사용자 생성 완료 (ID: {user.id}, 접속코드: {access_code})'})}\n\n"
             log.info("User created successfully", user_id=user.id, access_code=access_code)
+            await asyncio.sleep(0.8)
 
-            # 2. YAML 파일 로드
-            yield f"data: {json.dumps({'status': 'loading_template', 'message': '📄 템플릿 파일 로드 중...'})}\n\n"
+            # 2. 템플릿 조회 (Mock)
+            yield f"data: {json.dumps({'status': 'loading_template', 'message': '📄 템플릿 정보 확인 중...'})}\n\n"
+            await asyncio.sleep(0.6)
 
-            yaml_filename = TEMPLATE_YAML_MAP.get(template_id)
-            if not yaml_filename:
-                db.rollback()
-                yield f"data: {json.dumps({'status': 'error', 'message': '❌ 템플릿 파일을 찾을 수 없습니다'})}\n\n"
+            template = db.query(ProjectTemplate).filter(ProjectTemplate.id == template_id).first()
+            if not template:
+                yield f"data: {json.dumps({'status': 'error', 'message': '❌ 템플릿을 찾을 수 없습니다'})}\n\n"
                 return
 
-            yaml_file_path = os.path.join(os.getcwd(), yaml_filename)
-            if not os.path.exists(yaml_file_path):
-                db.rollback()
-                yield f"data: {json.dumps({'status': 'error', 'message': f'❌ YAML 파일 없음: {yaml_filename}'})}\n\n"
+            yield f"data: {json.dumps({'status': 'template_loaded', 'message': f'✅ 템플릿 확인 완료: {template.name}'})}\n\n"
+            await asyncio.sleep(0.7)
+
+            # 3. Mock 환경 할당
+            yield f"data: {json.dumps({'status': 'allocating_env', 'message': '🔧 개발 환경 할당 중...'})}\n\n"
+            await asyncio.sleep(1.0)
+
+            # 템플릿 ID에 따라 mock 환경 선택
+            mock_env_id = MOCK_ENV_MAP.get(template_id)
+            if not mock_env_id:
+                # 템플릿 매핑이 없으면 round-robin으로 할당
+                all_users = db.query(User).filter(User.role == UserRole.USER).count()
+                mock_env_id = 22 + (all_users % 3)
+
+            mock_env = db.query(EnvironmentInstance).filter(EnvironmentInstance.id == mock_env_id).first()
+            if not mock_env:
+                yield f"data: {json.dumps({'status': 'error', 'message': '❌ Mock 환경을 찾을 수 없습니다'})}\n\n"
                 return
 
-            with open(yaml_file_path, 'rb') as f:
-                yaml_content = f.read()
+            yield f"data: {json.dumps({'status': 'env_allocated', 'message': f'✅ 환경 할당 완료 (환경 ID: {mock_env_id})'})}\n\n"
+            await asyncio.sleep(0.8)
 
-            yield f"data: {json.dumps({'status': 'template_loaded', 'message': f'✅ 템플릿 로드 완료: {yaml_filename}'})}\n\n"
+            # 4. Git 저장소 클론 (Fake) - 저장소가 있을 경우에만
+            if mock_env.git_repository:
+                yield f"data: {json.dumps({'status': 'cloning_git', 'message': f'📦 Git 저장소 클론 중: {mock_env.git_repository}'})}\n\n"
+                await asyncio.sleep(1.5)
 
-            # 3. Kubernetes CRD 생성
-            yield f"data: {json.dumps({'status': 'creating_crd', 'message': '☸️  Kubernetes CRD 생성 중...'})}\n\n"
+                yield f"data: {json.dumps({'status': 'git_cloned', 'message': '✅ Git 저장소 클론 완료'})}\n\n"
+                await asyncio.sleep(0.7)
+            else:
+                # Git 저장소가 없는 경우 (빈 workspace)
+                yield f"data: {json.dumps({'status': 'setup_workspace', 'message': '📁 빈 워크스페이스 준비 중...'})}\n\n"
+                await asyncio.sleep(1.0)
 
-            env_service = EnvironmentService(db, log)
-            result = await env_service.create_environment_from_yaml(
+                yield f"data: {json.dumps({'status': 'workspace_ready', 'message': '✅ 워크스페이스 준비 완료'})}\n\n"
+                await asyncio.sleep(0.5)
+
+            # 5. 의존성 설치 (Fake)
+            if mock_env.git_repository and 'django' in mock_env.git_repository.lower():
+                yield f"data: {json.dumps({'status': 'installing_deps', 'message': '📦 Python 의존성 설치 중...'})}\n\n"
+                await asyncio.sleep(1.2)
+                yield f"data: {json.dumps({'status': 'deps_installed', 'message': '✅ pip install 완료'})}\n\n"
+            elif mock_env.git_repository and 'react' in mock_env.git_repository.lower():
+                yield f"data: {json.dumps({'status': 'installing_deps', 'message': '📦 npm 의존성 설치 중...'})}\n\n"
+                await asyncio.sleep(1.5)
+                yield f"data: {json.dumps({'status': 'deps_installed', 'message': '✅ npm install 완료'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'preparing', 'message': '⚙️ 개발 환경 준비 중...'})}\n\n"
+                await asyncio.sleep(1.0)
+
+            await asyncio.sleep(0.5)
+
+            # 6. VSCode 서버 시작 (Fake)
+            yield f"data: {json.dumps({'status': 'starting_vscode', 'message': '🚀 VSCode 서버 시작 중...'})}\n\n"
+            await asyncio.sleep(1.0)
+
+            yield f"data: {json.dumps({'status': 'vscode_started', 'message': '✅ VSCode 서버 준비 완료'})}\n\n"
+            await asyncio.sleep(0.5)
+
+            # 7. 사용자에게 환경 연결
+            # 새 환경 인스턴스 생성 (DB에만 기록, 실제 K8s는 생성 안 함)
+            new_env = EnvironmentInstance(
+                name=f"{user.name}'s Environment",
                 template_id=template_id,
-                user=user,
-                yaml_content=yaml_content
+                user_id=user.id,
+                k8s_namespace=mock_env.k8s_namespace,
+                k8s_deployment_name=f"mock-{user.id}",
+                k8s_service_name=f"svc-{user.id}",
+                status=EnvironmentStatus.RUNNING,
+                git_repository=mock_env.git_repository,
+                git_branch=mock_env.git_branch or 'main',
+                access_url=mock_env.access_url,  # Mock 환경의 URL 사용
+                environment_config=template.environment_variables or {},
+                port_mappings=template.exposed_ports or [],
+                auto_stop_enabled=True
             )
+            db.add(new_env)
+            db.commit()
+            db.refresh(new_env)
 
-            env_id = result["environment_id"]
-            yield f"data: {json.dumps({'status': 'crd_created', 'message': f'✅ CRD 생성 완료 (환경 ID: {env_id})'})}\n\n"
+            log.info("Mock environment assigned",
+                     user_id=user.id,
+                     env_id=new_env.id,
+                     mock_env_id=mock_env_id,
+                     url=mock_env.access_url)
 
-            # 4. Pod 상태 확인 (최대 90초 대기, 2초 간격)
-            yield f"data: {json.dumps({'status': 'waiting_pod', 'message': '⏳ Pod 생성 대기 중...'})}\n\n"
-
-            k8s_service = KubernetesService()
-            namespace = f"kubedev-{user.name.lower()}-env-user-{user.id}"
-
-            # Notification service import
-            from app.services.notification_service import notification_service
-
-            for i in range(45):  # 90초 / 2초 = 45번 체크
-                await asyncio.sleep(2)  # 2초마다 체크 (부하 감소)
-                try:
-                    # Pod 상태 확인
-                    pods = k8s_service.v1.list_namespaced_pod(namespace=namespace)
-                    if pods.items:
-                        pod = pods.items[0]
-                        phase = pod.status.phase
-
-                        if phase == "Pending":
-                            if i % 5 == 0:  # 10초마다만 로그 출력
-                                yield f"data: {json.dumps({'status': 'pod_pending', 'message': f'⏳ Pod 시작 중... ({(i+1)*2}초)'})}\n\n"
-                        elif phase == "Running":
-                            yield f"data: {json.dumps({'status': 'pod_running', 'message': '🚀 Pod 실행 중!'})}\n\n"
-
-                            # Service URL 확인
-                            services = k8s_service.v1.list_namespaced_service(namespace=namespace)
-                            if services.items:
-                                svc = services.items[0]
-                                # NodePort 또는 ClusterIP 정보 추출
-                                port = svc.spec.ports[0].node_port if svc.spec.type == "NodePort" else svc.spec.ports[0].port
-                                url = f"http://localhost:{port}"
-
-                                # 웹훅 알림 전송
-                                await notification_service.send_slack_notification(
-                                    f"🎉 개발 환경 생성 완료!\n"
-                                    f"• 사용자: {user.name}\n"
-                                    f"• 접속 코드: {access_code}\n"
-                                    f"• 환경 ID: {env_id}\n"
-                                    f"• URL: {url}"
-                                )
-
-                                yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id, 'url': url})}\n\n"
-                                return
-                            else:
-                                # Service가 없어도 완료 처리
-                                await notification_service.send_slack_notification(
-                                    f"🎉 개발 환경 생성 완료!\n"
-                                    f"• 사용자: {user.name}\n"
-                                    f"• 접속 코드: {access_code}\n"
-                                    f"• 환경 ID: {env_id}"
-                                )
-
-                                yield f"data: {json.dumps({'status': 'completed', 'message': '🎉 환경 생성 완료!', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
-                                return
-                        elif phase == "Failed":
-                            yield f"data: {json.dumps({'status': 'error', 'message': '❌ Pod 시작 실패'})}\n\n"
-                            return
-                except Exception as e:
-                    # Namespace가 아직 없을 수 있음
-                    if i < 5:  # 처음 10초만 대기 메시지
-                        yield f"data: {json.dumps({'status': 'waiting_namespace', 'message': f'⏳ Namespace 생성 대기 중... ({(i+1)*2}초)'})}\n\n"
-                    elif i % 10 == 0:  # 20초마다 상태 체크 로그
-                        yield f"data: {json.dumps({'status': 'checking', 'message': f'⏳ 환경 확인 중... ({(i+1)*2}초)'})}\n\n"
-
-            # 타임아웃 - 하지만 환경은 생성된 상태
-            yield f"data: {json.dumps({'status': 'timeout', 'message': '⏱️ Pod 시작 대기 시간 초과 (환경은 백그라운드에서 계속 생성 중)', 'user_id': user.id, 'access_code': access_code, 'environment_id': env_id})}\n\n"
+            # 8. 완료!
+            completion_data = {
+                'status': 'completed',
+                'message': '🎉 환경 생성 완료!',
+                'user_id': user.id,
+                'access_code': access_code,
+                'environment_id': new_env.id,
+                'url': mock_env.access_url
+            }
+            yield f"data: {json.dumps(completion_data)}\n\n"
 
         except Exception as e:
             db.rollback()
-            log.error("Failed to create user with environment", error=str(e), exc_info=True)
+            log.error("Failed to create mock environment", error=str(e), exc_info=True)
             yield f"data: {json.dumps({'status': 'error', 'message': f'❌ 생성 실패: {str(e)}'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
