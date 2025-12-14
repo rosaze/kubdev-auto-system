@@ -81,4 +81,4 @@ class EnvironmentInstance(Base):
     resource_metrics = relationship("ResourceMetric", back_populates="environment")
 
     def __repr__(self):
-        return f"<EnvironmentInstance(name='{self.name}', status='{self.status.value}', user='{self.user.email}')>"
+        return f"<EnvironmentInstance(name='{self.name}', status='{self.status.value}', user='{self.user.name}')>"

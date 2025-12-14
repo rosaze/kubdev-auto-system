@@ -13,6 +13,7 @@ spec:
 
   # Git repository URL to clone into the environment
   gitRepository: "https://github.com/APPS-sookmyung/2025-1-AI-Study.git"
+  gitRef: "main"
 
   # 'template' field contains the full Deployment specification for the controller to use.
   template:

@@ -55,7 +55,7 @@ metadata:
   namespace: kubedev-system
 data:
   # Optional: set your wildcard IDE domain root (e.g., ide.kubedev.local)
-  # ide-domain: ide.kubedev.local
+  ide-domain: kubedev.local
   # Optional: set default workspace image
-  # default-image: ghcr.io/coder/code-server:latest
+  default-image: codercom/code-server:latest
 

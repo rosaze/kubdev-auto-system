@@ -3,7 +3,9 @@ Monitoring API Endpoints
 모니터링 및 메트릭 API
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+import json
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -87,6 +89,45 @@ async def get_environment_metrics(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+
+
+@router.get("/environments/{environment_id}/metrics/current")
+async def get_environment_metrics_current(
+    environment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """DB에 저장된 최신 메트릭 스냅샷 반환"""
+    environment = db.query(EnvironmentInstance).filter(
+        EnvironmentInstance.id == environment_id
+    ).first()
+
+    if not environment:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    if environment.user_id != current_user.id and current_user.role.value not in ["org_admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="No permission to access this environment")
+
+    return {
+        "environment_id": environment_id,
+        "name": environment.name,
+        "current_usage": environment.current_resource_usage,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@router.get("/stream/pods")
+async def stream_managed_pods(request: Request):
+    """Managed pod snapshot stream (SSE)"""
+    k8s_service = KubernetesService()
+
+    async def event_generator():
+        async for snapshot in k8s_service.stream_pod_snapshots():
+            if await request.is_disconnected():
+                break
+            yield f"data: {json.dumps(snapshot)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/user/{user_id}/environments")
@@ -327,6 +368,22 @@ async def get_system_metrics(
         raise HTTPException(status_code=500, detail=f"Failed to get system metrics: {str(e)}")
 
 
+@router.get("/events/recent")
+async def get_recent_events(
+    limit: int = Query(30, ge=1, le=200),
+    namespaces: Optional[str] = Query(None, description="Comma separated namespaces to filter"),
+    current_user: User = Depends(get_current_user),
+):
+    """최근 이벤트 조회 (필터링 가능)"""
+    try:
+        k8s_service = KubernetesService()
+        namespace_list = [ns.strip() for ns in namespaces.split(",")] if namespaces else None
+        events = await k8s_service.get_recent_events(namespaces=namespace_list, limit=limit)
+        return {"events": events, "count": len(events), "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get recent events: {str(e)}")
+
+
 @router.get("/logs/{environment_id}")
 async def get_environment_logs(
     environment_id: int,
@@ -368,6 +425,70 @@ async def get_environment_logs(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get logs: {str(e)}")
+
+
+@router.get("/environments/{environment_id}/insight")
+async def get_environment_insight(
+    environment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """특정 환경에 대한 상세 모니터링 정보"""
+    environment = db.query(EnvironmentInstance).filter(
+        EnvironmentInstance.id == environment_id
+    ).first()
+
+    if not environment:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    if environment.user_id != current_user.id and current_user.role.value not in ["org_admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="No permission to access this environment")
+
+    k8s_service = KubernetesService()
+    errors = []
+
+    pods = []
+    try:
+        pods = await k8s_service.list_managed_pods(label_selector=f"app={environment.k8s_deployment_name}")
+        pods = [p for p in pods if p.get("namespace") == environment.k8s_namespace]
+    except Exception as e:
+        errors.append(f"pods: {str(e)}")
+
+    try:
+        pod_metrics = await k8s_service.get_pod_metrics_for_namespace(environment.k8s_namespace)
+        for pod in pods:
+            metrics = pod_metrics.get(pod["name"])
+            if metrics:
+                pod["metrics"] = metrics
+    except Exception as e:
+        errors.append(f"metrics: {str(e)}")
+
+    events = []
+    try:
+        events = await k8s_service.list_namespace_events(environment.k8s_namespace, limit=30)
+    except Exception as e:
+        errors.append(f"events: {str(e)}")
+
+    logs = []
+    try:
+        logs = await k8s_service.get_pod_logs(
+            namespace=environment.k8s_namespace,
+            deployment_name=environment.k8s_deployment_name,
+            tail_lines=200
+        )
+    except Exception as e:
+        errors.append(f"logs: {str(e)}")
+
+    return {
+        "environment_id": environment_id,
+        "pods": pods,
+        "events": events,
+        "logs": logs,
+        "namespace": environment.k8s_namespace,
+        "deployment": environment.k8s_deployment_name,
+        "timestamp": datetime.utcnow().isoformat(),
+        "errors": errors,
+    }
 
 
 @router.get("/alerts")

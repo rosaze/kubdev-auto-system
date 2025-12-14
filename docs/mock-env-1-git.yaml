@@ -1,0 +1,54 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: demo-env-git-example
+  namespace: kubdev-users
+spec:
+  userName: "demo-user-git"
+  gitRepository: "https://github.com/APPS-sookmyung/2025-1-AI-Study.git"
+  gitRef: "main"
+  template:
+    apiVersion: apps/v1
+    kind: Deployment
+    spec:
+      replicas: 1
+      template:
+        spec:
+          initContainers:
+            - name: git-clone
+              image: alpine/git
+              args:
+                - clone
+                - --single-branch
+                - --branch
+                - main
+                - "https://github.com/APPS-sookmyung/2025-1-AI-Study.git"
+                - /workspace
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+          containers:
+            - name: vscode
+              image: codercom/code-server:latest
+              args:
+                - "--auth"
+                - "none"
+                - "--bind-addr"
+                - "0.0.0.0:8080"
+                - "/workspace"
+              ports:
+                - containerPort: 8080
+                  name: http
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "512Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "2Gi"
+          volumes:
+            - name: workspace-storage
+              emptyDir: {}

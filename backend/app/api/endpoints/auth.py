@@ -112,75 +112,28 @@ async def get_my_environment(
                 "message": "환경이 생성되지 않았습니다. 관리자에게 문의하세요."
             }
 
-        # Kubernetes 상태 확인 및 DB 동기화
-        try:
-            k8s_service = KubernetesService()
-            crd_name = environment.k8s_deployment_name
-            crd_namespace = environment.k8s_namespace
-
-            custom_obj = await k8s_service.get_custom_object(
-                "kubedev.my-project.com", "v1alpha1", crd_namespace, "kubedevenvironments", crd_name
-            )
-
-            # CRD의 phase 확인
-            k8s_phase = custom_obj.get("status", {}).get("phase")
-
-            # DB 상태와 K8s 상태 매핑
-            if k8s_phase == "Running" and environment.status != EnvironmentStatus.RUNNING:
-                environment.status = EnvironmentStatus.RUNNING
-                db.commit()
-                log.info("Synced environment status to RUNNING", env_id=environment.id)
-            elif k8s_phase == "Provisioning" and environment.status == EnvironmentStatus.CREATING:
-                # CREATING 상태 유지
-                pass
-            elif k8s_phase == "Failed" and environment.status != EnvironmentStatus.ERROR:
-                environment.status = EnvironmentStatus.ERROR
-                db.commit()
-                log.info("Synced environment status to ERROR", env_id=environment.id)
-
-        except Exception as e:
-            log.warning("Failed to sync environment status from K8s", env_id=environment.id, error=str(e))
-            # 동기화 실패해도 계속 진행
-
-        # Kubernetes API로 실제 접속 가능한 주소 생성
+        # 간단한 구현: DB의 access_url을 직접 사용
         access_url = environment.access_url
-        if environment.status == EnvironmentStatus.RUNNING:
-            try:
-                crd_name = environment.k8s_deployment_name
-                crd_namespace = environment.k8s_namespace
-
-                # CRD status에서 ideUrl 가져오기
-                try:
-                    k8s_service = KubernetesService()
-                    custom_obj = await k8s_service.get_custom_object(
-                        "kubedev.my-project.com", "v1alpha1", crd_namespace, "kubedevenvironments", crd_name
-                    )
-                    ide_url = custom_obj.get("status", {}).get("ideUrl")
-
-                    # ideUrl이 비어있거나 .local 도메인인 경우 NodePort URL 생성
-                    if not ide_url or ".local" in ide_url:
-                        service_name = f"ide-{crd_name}"
-                        # CRD status에서 실제 namespace 가져오기
-                        actual_namespace = custom_obj.get("status", {}).get("namespace") or crd_namespace
-
-                        # Kubernetes API로 NodePort URL 가져오기
-                        nodeport_url = await k8s_service.get_nodeport_url(service_name, actual_namespace)
-                        if nodeport_url:
-                            access_url = nodeport_url
-                        elif ide_url:
-                            # fallback to original ideUrl if present
-                            access_url = ide_url
-                    else:
-                        access_url = ide_url
-                except Exception as e:
-                    log.warning("Failed to get IDE URL from CRD", env_id=environment.id, error=str(e))
-            except Exception as e:
-                log.warning("Failed to generate access URL", env_id=environment.id, error=str(e))
-
         can_access = (
             environment.status == EnvironmentStatus.RUNNING and
             access_url is not None
         )
+
+        # 템플릿 정보 가져오기
+        template = None
+        template_info = {}
+        if environment.template_id:
+            from app.models.project_template import ProjectTemplate
+            template = db.query(ProjectTemplate).filter(ProjectTemplate.id == environment.template_id).first()
+            if template:
+                template_info = {
+                    "template_name": template.name,
+                    "template_description": template.description,
+                    "base_image": template.base_image,
+                    "resource_limits": template.resource_limits or {},
+                    "exposed_ports": template.exposed_ports or [],
+                    "environment_variables": {k: v for k, v in (template.environment_variables or {}).items() if not any(secret in k.lower() for secret in ['password', 'secret', 'key', 'token'])},
+                }
 
         log.info("Environment info retrieved",
                  environment_id=environment.id,
@@ -198,7 +151,8 @@ async def get_my_environment(
             "can_access": can_access,
             "started_at": environment.started_at.isoformat() if environment.started_at else None,
             "expires_at": environment.expires_at.isoformat() if environment.expires_at else None,
-            "message": "환경이 준비되었습니다" if can_access else f"환경 상태: {environment.status.value}"
+            "message": "환경이 준비되었습니다" if can_access else f"환경 상태: {environment.status.value}",
+            **template_info
         }
 
     except Exception as e:
