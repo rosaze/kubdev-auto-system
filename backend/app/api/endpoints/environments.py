@@ -3,17 +3,17 @@ Environment API Endpoints
 개발 환경 관리 API
 """
 import structlog
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Dict, Any
 import uuid
+import yaml
 
 from app.core.database import get_db
 from app.models.environment import EnvironmentInstance, EnvironmentStatus
-from app.models.project_template import ProjectTemplate
+
 from app.models.user import User
 from app.schemas.environment import (
-    EnvironmentCreate,
     EnvironmentResponse,
     EnvironmentUpdate,
     EnvironmentActionRequest,
@@ -27,57 +27,86 @@ router = APIRouter()
 log = structlog.get_logger(__name__)
 
 
-@router.post("/", response_model=EnvironmentResponse)
-async def create_environment(
-    environment_data: EnvironmentCreate,
+@router.post("/create-from-yaml", response_model=Dict[str, Any])
+async def create_environment_from_yaml(
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """새로운 개발 환경 생성"""
-    log.info("Creating new environment", user_id=current_user.id, template_id=environment_data.template_id)
-    # 템플릿 존재 확인
-    template = db.query(ProjectTemplate).filter(
-        ProjectTemplate.id == environment_data.template_id
-    ).first()
+    """
+    새로운 개발 환경을 KubeDevEnvironment CRD YAML 파일을 통해 생성합니다.
+    """
+    log.info("Creating new environment from YAML", user_id=current_user.id, filename=file.filename)
 
-    if not template:
-        log.warning("Environment creation failed: template not found", template_id=environment_data.template_id)
-        raise HTTPException(status_code=404, detail="Template not found")
+    if not file.filename.lower().endswith(('.yaml', '.yml')):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only .yaml or .yml files are accepted.")
 
+    # 1. Read and decode YAML file
+    yaml_bytes = await file.read()
+    yaml_string = ""
     try:
-        # 고유한 환경 이름 생성
-        unique_id = str(uuid.uuid4())[:8]
-        k8s_name = f"{environment_data.name}-{unique_id}".lower()
+        yaml_string = yaml_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            yaml_string = yaml_bytes.decode("cp949")
+            log.info("Decoded YAML file using cp949 encoding as a fallback.")
+        except UnicodeDecodeError:
+            log.error("Failed to decode YAML file with both utf-8 and cp949.", exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Could not decode file. Please ensure it is saved with UTF-8 or CP949 encoding."
+            )
 
-        # 환경 인스턴스 생성
+    # 2. Parse and validate YAML
+    try:
+        custom_object = yaml.safe_load(yaml_string)
+        if not isinstance(custom_object, dict):
+            raise HTTPException(status_code=400, detail="Invalid YAML format: not a dictionary.")
+
+        api_version = custom_object.get("apiVersion")
+        kind = custom_object.get("kind")
+        if api_version != "kubedev.my-project.com/v1alpha1" or kind != "KubeDevEnvironment":
+            raise HTTPException(status_code=400, detail="Invalid YAML: apiVersion or kind does not match KubeDevEnvironment CRD.")
+
+        # Inject/overwrite userName from the authenticated user for security
+        if "spec" not in custom_object: custom_object["spec"] = {}
+        custom_object["spec"]["userName"] = current_user.name
+        log.info(f"Injected/overwrote userName '{current_user.name}' into CRD spec.")
+
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"YAML parsing error: {str(e)}")
+
+    # 3. Apply the Custom Resource to Kubernetes
+    try:
+        k8s_service = KubernetesService()
+        api_response = await k8s_service.create_custom_object(custom_object)
+        log.info("Successfully applied KubeDevEnvironment CRD to Kubernetes.", crd_name=custom_object.get("metadata", {}).get("name"))
+        
+        # CRD를 생성한 후, 우리 시스템에서 환경을 추적하기 위해 DB에 레코드를 생성합니다.
+        env_name = custom_object.get("metadata", {}).get("name")
         environment = EnvironmentInstance(
-            name=environment_data.name,
-            template_id=environment_data.template_id,
+            name=env_name,
             user_id=current_user.id,
-            k8s_namespace="kubdev",  # 기본 네임스페이스
-            k8s_deployment_name=f"env-{k8s_name}",
-            k8s_service_name=f"svc-{k8s_name}",
-            git_repository=environment_data.git_repository,
-            git_branch=environment_data.git_branch or "main",
+            k8s_namespace=custom_object.get("metadata", {}).get("namespace", "default"),
+            k8s_deployment_name=env_name, # CRD 이름과 동일하게 설정 (컨트롤러의 규칙에 따라 달라질 수 있음)
             status=EnvironmentStatus.CREATING,
-            expires_at=environment_data.expires_at
+            git_repository=custom_object.get("spec", {}).get("gitRepository")
         )
-
         db.add(environment)
         db.commit()
         db.refresh(environment)
-        log.info("Environment DB instance created", environment_id=environment.id, k8s_name=k8s_name)
+        log.info("Environment DB instance created for tracking.", environment_id=environment.id)
 
-        # K8s에 환경 배포 (백그라운드 작업)
-        env_service = EnvironmentService(db, structlog.get_logger("app.services.environment_service"))
-        await env_service.deploy_environment(environment.id)
-        log.info("Environment deployment process started", environment_id=environment.id)
-
-        return environment
-
+        # 복잡한 k8s 응답 객체 대신 명확한 성공 메시지를 직접 만들어 반환합니다.
+        return {
+            "status": "success",
+            "message": "KubeDevEnvironment custom resource created successfully.",
+            "crd_name": custom_object.get("metadata", {}).get("name"),
+            "namespace": custom_object.get("metadata", {}).get("namespace", "default")
+        }
     except Exception as e:
+        log.error("Failed to apply CRD to Kubernetes or create DB record", error=str(e), exc_info=True)
         db.rollback()
-        log.error("Environment creation failed: internal server error", user_id=current_user.id, error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to create environment: {str(e)}")
 
 
@@ -165,7 +194,7 @@ async def environment_action(
     action_request: EnvironmentActionRequest,
     db: Session = Depends(get_db)
 ):
-    """환경 액션 실행 (start, stop, restart, delete)"""
+    """환경 액션 실행 (start, stop, restart, delete) - 시연용 (인증 없음)"""
     action = action_request.action
     log.info("Executing environment action", environment_id=environment_id, action=action)
     environment = db.query(EnvironmentInstance).filter(

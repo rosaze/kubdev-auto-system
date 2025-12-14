@@ -3,6 +3,7 @@ import sys
 import uvicorn
 
 from fastapi import FastAPI, HTTPException
+
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import check_database_connection, create_all_tables
@@ -30,6 +31,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+
+
 
 # CORS 설정
 app.add_middleware(
@@ -111,18 +115,9 @@ async def health_check():
                 "health_status": health_status
             }
         )
-# Try importing as a package; if that fails, add repo root to sys.path and retry
-try:
-    from backend.app import app  # type: ignore
-except ModuleNotFoundError:
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-    from backend.app import app  # type: ignore
-
-
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
     uvicorn.run(app, host=host, port=port)
+

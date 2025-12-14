@@ -204,6 +204,62 @@ async def health_check():
         }
 
 
+@router.get("/metrics")
+async def get_user_environment_metrics(
+    db: Session = Depends(get_db)
+):
+    """모든 환경의 리소스 메트릭 조회 - 시연용 (인증 없음)"""
+    try:
+        # 모든 환경 조회 (시연용)
+        environments = db.query(EnvironmentInstance).all()
+
+        if not environments:
+            return []
+
+        k8s_service = KubernetesService()
+        metrics_list = []
+
+        for env in environments:
+            try:
+                # 각 환경의 실시간 메트릭 조회
+                live_metrics = await k8s_service.get_live_resource_metrics(env.k8s_namespace)
+
+                # 메트릭 데이터 추출
+                if live_metrics and live_metrics.get("pods"):
+                    for pod in live_metrics["pods"]:
+                        metrics_list.append({
+                            "user_id": env.user_id,
+                            "environment_id": env.id,
+                            "cpu": pod.get("cpu_usage_millicores", 0),  # 밀리코어 단위
+                            "memory": pod.get("memory_usage_mb", 0),    # MB 단위
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                else:
+                    # 메트릭을 가져올 수 없는 경우 기본값
+                    metrics_list.append({
+                        "user_id": env.user_id,
+                        "environment_id": env.id,
+                        "cpu": 0,
+                        "memory": 0,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+            except Exception as env_error:
+                # 개별 환경 오류는 기본값으로 처리하고 계속
+                metrics_list.append({
+                    "user_id": env.user_id,
+                    "environment_id": env.id,
+                    "cpu": 0,
+                    "memory": 0,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "error": str(env_error)
+                })
+
+        return metrics_list
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get environment metrics: {str(e)}")
+
+
 @router.get("/metrics/system")
 async def get_system_metrics(
     current_user: User = Depends(get_current_user)

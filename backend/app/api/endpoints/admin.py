@@ -12,7 +12,6 @@ from app.core.database import get_db
 from app.models.environment import EnvironmentInstance
 from app.models.user import User
 from app.models.project_template import ProjectTemplate
-from app.models.organization import Organization
 from app.services.kubernetes_service import KubernetesService
 
 router = APIRouter()
@@ -204,7 +203,6 @@ async def get_users_activity(
                                          if env.status.value == 'running'),
                 "last_activity": max([env.created_at for env in user_environments])
                                 if user_environments else None,
-                "organization": user.organization.name if user.organization else None
             })
 
         return {
@@ -399,7 +397,7 @@ async def get_live_metrics(namespace: str):
 
 @router.post("/users/batch")
 async def create_batch_users(
-    request_data: dict,  # prefix, count, template_id, resource_quota, organization_id
+    request_data: dict,  # prefix, count, template_id, resource_quota
     db: Session = Depends(get_db)
 ):
     """부트캠프용 대량 사용자 계정 생성"""
@@ -413,7 +411,6 @@ async def create_batch_users(
         prefix = request_data.get("prefix")
         count = request_data.get("count")
         template_id = request_data.get("template_id")
-        organization_id = request_data.get("organization_id", 1)
         resource_quota = request_data.get("resource_quota", {
             "cpu": "1",
             "memory": "2Gi",
@@ -448,7 +445,6 @@ async def create_batch_users(
             prefix=prefix,
             count=count,
             template_id=template_id,
-            organization_id=organization_id,
             resource_quota=resource_quota
         )
 
@@ -486,7 +482,6 @@ async def create_single_user_with_environment(
         username = request_data.get("username")
         template_id = request_data.get("template_id")
         password = request_data.get("password")  # 지정하지 않으면 자동생성
-        organization_id = request_data.get("organization_id", 1)
         resource_quota = request_data.get("resource_quota", {
             "cpu": "1",
             "memory": "2Gi",
@@ -524,7 +519,6 @@ async def create_single_user_with_environment(
         result = await batch_service.create_single_user_with_environment(
             username=username,
             template_id=template_id,
-            organization_id=organization_id,
             resource_quota=resource_quota,
             custom_password=password
         )
