@@ -23,6 +23,11 @@ rules:
   resources: ["namespaces"]
   verbs: ["get", "list", "create", "delete"]
 
+# Node 조회 (클러스터 상태 확인용)
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+
 # Pod 관리 (로그 조회, 상태 확인)
 - apiGroups: [""]
   resources: ["pods", "pods/log", "pods/status"]
