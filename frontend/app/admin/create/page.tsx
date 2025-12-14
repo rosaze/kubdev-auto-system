@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { createAdminAccount, createUserAccount, createUserWithEnvironmentStream, type StreamEvent } from "@/lib/api"
+import { createAdminAccount, createUserAccount, createUserWithEnvironmentStream, getTemplates, type StreamEvent, type ProjectTemplate } from "@/lib/api"
 
 export default function AdminCreatePage() {
   const router = useRouter()
@@ -14,7 +14,9 @@ export default function AdminCreatePage() {
   const [isEnvironmentSet, setIsEnvironmentSet] = useState(false)
 
   const [userId, setUserId] = useState("")
-  const [selectedTemplate, setSelectedTemplate] = useState<number>(3) // 기본값: demo_bash_simple
+  const [templates, setTemplates] = useState<ProjectTemplate[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<number>(0)
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false)
 
   const [generatedAccount, setGeneratedAccount] = useState<{
     type: "admin" | "user"
@@ -28,6 +30,28 @@ export default function AdminCreatePage() {
   const [logs, setLogs] = useState<string[]>([])
   const [showLogs, setShowLogs] = useState(false)
   const closeStreamRef = useRef<(() => void) | null>(null)
+  const logQueueRef = useRef<string[]>([])
+  const logTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const startLogPump = () => {
+    if (logTimerRef.current) return
+    logTimerRef.current = setInterval(() => {
+      const next = logQueueRef.current.shift()
+      if (next) {
+        setLogs((prev) => [...prev, next])
+      }
+    }, 300) // 0.3초 간격으로 로그 표시
+  }
+
+  useEffect(() => {
+    return () => {
+      if (logTimerRef.current) {
+        clearInterval(logTimerRef.current)
+        logTimerRef.current = null
+      }
+      logQueueRef.current = []
+    }
+  }, [])
 
   useEffect(() => {
     setMounted(true)
@@ -41,6 +65,20 @@ export default function AdminCreatePage() {
     if (savedEnvironment === "true") {
       setIsEnvironmentSet(true)
     }
+
+    // 템플릿 목록 불러오기
+    const loadTemplates = async () => {
+      setIsLoadingTemplates(true)
+      const result = await getTemplates(1, 50)
+      if (result.success && result.data) {
+        setTemplates(result.data.templates)
+        if (result.data.templates.length > 0) {
+          setSelectedTemplate(result.data.templates[0].id)
+        }
+      }
+      setIsLoadingTemplates(false)
+    }
+    loadTemplates()
   }, [router])
 
   const handleCreateAdminAccount = async () => {
@@ -76,6 +114,11 @@ export default function AdminCreatePage() {
     setIsCreating(true)
     setCreateError("")
     setLogs([])
+    logQueueRef.current = []
+    if (logTimerRef.current) {
+      clearInterval(logTimerRef.current)
+      logTimerRef.current = null
+    }
     setShowLogs(true)
 
     // SSE를 사용한 실시간 로그 스트리밍
@@ -84,11 +127,13 @@ export default function AdminCreatePage() {
       selectedTemplate,
       (event: StreamEvent) => {
         // 실시간 로그 메시지 추가
-        setLogs(prev => [...prev, event.message])
+        logQueueRef.current.push(event.message)
+        startLogPump()
       },
       (data) => {
         // 완료 시
-        setLogs(prev => [...prev, '✅ 모든 작업 완료!'])
+        logQueueRef.current.push("✅ 모든 작업 완료!")
+        startLogPump()
         setGeneratedAccount({
           type: "user",
           code: data.access_code,
@@ -99,6 +144,8 @@ export default function AdminCreatePage() {
       },
       (error) => {
         // 에러 발생 시
+        logQueueRef.current.push(`❌ 오류: ${error}`)
+        startLogPump()
         setCreateError(error)
         setIsCreating(false)
       }
@@ -256,15 +303,29 @@ export default function AdminCreatePage() {
                     id="template"
                     value={selectedTemplate}
                     onChange={(e) => setSelectedTemplate(Number(e.target.value))}
-                    disabled={isCreating}
+                    disabled={isCreating || isLoadingTemplates}
                     className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                   >
-                    <option value={1}>Node.js 개발 환경</option>
-                    <option value={2}>Python ML 환경</option>
-                    <option value={3}>Bash 간단 환경</option>
+                    {isLoadingTemplates ? (
+                      <option value={0}>템플릿 로딩 중...</option>
+                    ) : templates.length === 0 ? (
+                      <option value={0}>사용 가능한 템플릿이 없습니다</option>
+                    ) : (
+                      templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name} (ID: {template.id})
+                        </option>
+                      ))
+                    )}
                   </select>
                   <p className="text-xs text-muted-foreground">
-                    선택한 템플릿으로 개발 환경이 자동 생성됩니다
+                    {isLoadingTemplates ? (
+                      "템플릿 목록을 불러오는 중..."
+                    ) : templates.length === 0 ? (
+                      "환경 설정에서 YAML 파일을 업로드하여 템플릿을 생성하세요"
+                    ) : (
+                      `${templates.length}개의 템플릿 사용 가능 - 선택한 템플릿으로 개발 환경이 자동 생성됩니다`
+                    )}
                   </p>
                 </div>
 
