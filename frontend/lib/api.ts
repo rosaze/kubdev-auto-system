@@ -1,4 +1,4 @@
-const API_BASE_URL =
+export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
 
 // API 응답 타입 정의
@@ -351,7 +351,178 @@ export async function createTemplateFromYaml(
   }
 }
 
-// 11. 사용자 + 환경 통합 생성 (새로운 엔드포인트)
+// 11. 템플릿 목록 조회
+export interface ProjectTemplate {
+  id: number;
+  name: string;
+  description?: string;
+  version: string;
+  status: string;
+  stack_config: any;
+  dependencies: string[];
+  base_image: string;
+  custom_dockerfile?: string;
+  init_scripts: string[];
+  post_start_commands: string[];
+  resource_limits: {
+    cpu: string;
+    memory: string;
+    storage: string;
+  };
+  exposed_ports: number[];
+  environment_variables: Record<string, string>;
+  default_git_repo?: string;
+  git_branch: string;
+  is_public: boolean;
+  created_by: number;
+  usage_count: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface PodInsight {
+  namespace: string;
+  name: string;
+  phase: string;
+  ready: boolean;
+  restarts: number;
+  host_ip?: string;
+  pod_ip?: string;
+  start_time?: string;
+  containers?: string[];
+  metrics?: {
+    cpu_millicores?: number;
+    memory_mb?: number;
+  };
+}
+
+export interface K8sEvent {
+  namespace?: string;
+  name: string;
+  reason?: string;
+  message?: string;
+  type?: string;
+  count?: number;
+  involved_object?: string;
+  kind?: string;
+  timestamp?: string;
+}
+
+export interface EnvironmentInsight {
+  environment_id: number;
+  namespace: string;
+  deployment: string;
+  pods: PodInsight[];
+  events: K8sEvent[];
+  logs: string[];
+  timestamp: string;
+}
+
+export async function getTemplates(
+  page: number = 1,
+  size: number = 50
+): Promise<ApiResponse<{ templates: ProjectTemplate[]; total: number; page: number; size: number }>> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/templates/?page=${page}&size=${size}`
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: error.detail || "템플릿 목록 조회에 실패했습니다",
+      };
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error("[frontend] Get templates error:", error);
+    return { success: false, error: "서버와 통신할 수 없습니다" };
+  }
+}
+
+export async function getSystemMetrics(): Promise<ApiResponse<any>> {
+  try {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const response = await fetch(`${API_BASE_URL}/monitoring/metrics/system`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: error.detail || "시스템 메트릭 조회에 실패했습니다",
+      };
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error("[frontend] Get system metrics error:", error);
+    return { success: false, error: "서버와 통신할 수 없습니다" };
+  }
+}
+
+export async function getRecentEvents(
+  limit: number = 30,
+  namespaces?: string[]
+): Promise<ApiResponse<{ events: K8sEvent[]; count: number; timestamp: string }>> {
+  try {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (namespaces && namespaces.length > 0) {
+      params.append("namespaces", namespaces.join(","));
+    }
+
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const response = await fetch(`${API_BASE_URL}/monitoring/events/recent?${params.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: error.detail || "이벤트 조회에 실패했습니다",
+      };
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error("[frontend] Get recent events error:", error);
+    return { success: false, error: "서버와 통신할 수 없습니다" };
+  }
+}
+
+export async function getEnvironmentInsight(
+  environmentId: number
+): Promise<ApiResponse<EnvironmentInsight>> {
+  try {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const response = await fetch(`${API_BASE_URL}/monitoring/environments/${environmentId}/insight`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: error.detail || "환경 상세 정보를 불러오지 못했습니다",
+      };
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error("[frontend] Get environment insight error:", error);
+    return { success: false, error: "서버와 통신할 수 없습니다" };
+  }
+}
+
+// 12. 사용자 + 환경 통합 생성 (새로운 엔드포인트)
 export async function createUserWithEnvironment(
   userName: string,
   templateId: number
