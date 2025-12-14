@@ -29,6 +29,16 @@ interface EnvironmentInfo {
   message?: string;
   started_at?: string;
   expires_at?: string;
+  template_name?: string;
+  template_description?: string;
+  base_image?: string;
+  resource_limits?: {
+    cpu?: string;
+    memory?: string;
+    storage?: string;
+  };
+  exposed_ports?: number[];
+  environment_variables?: Record<string, string>;
 }
 
 export default function UserHomePage() {
@@ -229,6 +239,45 @@ export default function UserHomePage() {
                         <p className="text-xs text-muted-foreground">
                           {environmentInfo.git_repository} ({environmentInfo.git_branch || 'main'})
                         </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 환경 설정 정보 */}
+                  {environmentInfo.template_name && (
+                    <div className="space-y-2 p-3 bg-white/50 dark:bg-gray-800/50 rounded-lg border">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <p className="font-medium text-sm">환경 설정</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {environmentInfo.base_image && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">이미지:</span>
+                            <span className="ml-2 font-mono text-blue-600 dark:text-blue-400">{environmentInfo.base_image}</span>
+                          </div>
+                        )}
+                        {environmentInfo.resource_limits?.cpu && (
+                          <div>
+                            <span className="text-muted-foreground">CPU:</span>
+                            <span className="ml-2 font-semibold">{environmentInfo.resource_limits.cpu}</span>
+                          </div>
+                        )}
+                        {environmentInfo.resource_limits?.memory && (
+                          <div>
+                            <span className="text-muted-foreground">메모리:</span>
+                            <span className="ml-2 font-semibold">{environmentInfo.resource_limits.memory}</span>
+                          </div>
+                        )}
+                        {environmentInfo.exposed_ports && environmentInfo.exposed_ports.length > 0 && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">포트:</span>
+                            <span className="ml-2 font-mono">{environmentInfo.exposed_ports.join(', ')}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
