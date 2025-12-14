@@ -639,6 +639,73 @@ async def create_template_from_yaml(
         db.commit()
         db.refresh(template)
 
+        # ========================================
+        # 🚀 검증용 KubeDevEnvironment CRD 생성
+        # ========================================
+        try:
+            from app.services.kubernetes_service import KubernetesService
+            from app.models.environment import EnvironmentInstance, EnvironmentStatus
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info(f"Creating validation environment for template: {template.name}")
+
+            k8s_service = KubernetesService()
+
+            # CRD 이름 및 네임스페이스
+            crd_name = f"validation-{template.name.lower().replace(' ', '-')}"
+            crd_namespace = "kubdev-users"
+
+            # KubeDevEnvironment CRD 객체 생성
+            crd_object = {
+                "apiVersion": "kubedev.my-project.com/v1alpha1",
+                "kind": "KubeDevEnvironment",
+                "metadata": {
+                    "name": crd_name,
+                    "namespace": crd_namespace
+                },
+                "spec": {
+                    "userName": f"validation-{template.name}",
+                    "gitRepository": template.default_git_repo or "",
+                    "image": template.base_image,
+                    "commands": {
+                        "init": "\n".join(template.init_scripts) if template.init_scripts else "",
+                        "start": "\n".join(template.post_start_commands) if template.post_start_commands else ""
+                    },
+                    "ports": template.exposed_ports or [8080],
+                    "storage": {
+                        "size": template.resource_limits.get("storage", "10Gi") if template.resource_limits else "10Gi"
+                    }
+                }
+            }
+
+            # CRD 생성
+            logger.info(f"Applying KubeDevEnvironment CRD: {crd_name}")
+            await k8s_service.create_custom_object(crd_object)
+            logger.info(f"✅ Validation environment CRD created: {crd_name}")
+
+            # 검증용 환경 DB 레코드 생성 (선택사항 - 추적용)
+            validation_env = EnvironmentInstance(
+                name=f"Validation: {template.name}",
+                template_id=template.id,
+                user_id=created_by,  # 템플릿 생성자가 소유
+                k8s_namespace=crd_namespace,
+                k8s_deployment_name=crd_name,
+                status=EnvironmentStatus.CREATING,
+                git_repository=template.default_git_repo,
+                git_branch=template.git_branch
+            )
+            db.add(validation_env)
+            db.commit()
+            db.refresh(validation_env)
+
+            logger.info(f"✅ Validation environment DB record created: {validation_env.id}")
+
+        except Exception as crd_error:
+            logger.error(f"Failed to create validation CRD: {str(crd_error)}")
+            # CRD 생성 실패해도 템플릿은 저장됨 (경고만 표시)
+            # 필요하면 여기서 예외를 던져서 전체 트랜잭션 롤백 가능
+
         return template
 
     except HTTPException:

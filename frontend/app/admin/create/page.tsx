@@ -1,13 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
-import { createAdminAccount, createUserAccount } from "@/lib/api"
+import { createAdminAccount, createUserAccount, createUserWithEnvironmentStream, type StreamEvent } from "@/lib/api"
 
 export default function AdminCreatePage() {
   const router = useRouter()
@@ -16,17 +14,20 @@ export default function AdminCreatePage() {
   const [isEnvironmentSet, setIsEnvironmentSet] = useState(false)
 
   const [userId, setUserId] = useState("")
-  const [permissions, setPermissions] = useState<string[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<number>(3) // 기본값: demo_bash_simple
 
   const [generatedAccount, setGeneratedAccount] = useState<{
     type: "admin" | "user"
     code: string
     userId?: string
-    permissions?: string[]
+    environmentId?: number
   } | null>(null)
 
   const [isCreating, setIsCreating] = useState(false)
   const [createError, setCreateError] = useState("")
+  const [logs, setLogs] = useState<string[]>([])
+  const [showLogs, setShowLogs] = useState(false)
+  const closeStreamRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -67,38 +68,43 @@ export default function AdminCreatePage() {
   }
 
   const handleCreateUserAccount = async () => {
-    if (!userId.trim() || permissions.length === 0) {
-      setCreateError("ID와 권한을 모두 입력해주세요.")
-      return
-    }
-
-    const currentUserId = localStorage.getItem("userId")
-    if (!currentUserId) {
-      setCreateError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
+    if (!userId.trim()) {
+      setCreateError("사용자 이름을 입력해주세요.")
       return
     }
 
     setIsCreating(true)
     setCreateError("")
+    setLogs([])
+    setShowLogs(true)
 
-    const result = await createUserAccount(currentUserId, userId.trim())
+    // SSE를 사용한 실시간 로그 스트리밍
+    const closeStream = createUserWithEnvironmentStream(
+      userId.trim(),
+      selectedTemplate,
+      (event: StreamEvent) => {
+        // 실시간 로그 메시지 추가
+        setLogs(prev => [...prev, event.message])
+      },
+      (data) => {
+        // 완료 시
+        setLogs(prev => [...prev, '✅ 모든 작업 완료!'])
+        setGeneratedAccount({
+          type: "user",
+          code: data.access_code,
+          userId: userId.trim(),
+          environmentId: data.environment_id,
+        })
+        setIsCreating(false)
+      },
+      (error) => {
+        // 에러 발생 시
+        setCreateError(error)
+        setIsCreating(false)
+      }
+    )
 
-    if (result.success && result.data) {
-      setGeneratedAccount({
-        type: "user",
-        code: result.data.user_code,
-        userId: userId.trim(),
-        permissions,
-      })
-    } else {
-      setCreateError(result.error || "계정 생성에 실패했습니다")
-    }
-
-    setIsCreating(false)
-  }
-
-  const togglePermission = (permission: string) => {
-    setPermissions((prev) => (prev.includes(permission) ? prev.filter((p) => p !== permission) : [...prev, permission]))
+    closeStreamRef.current = closeStream
   }
 
   const handleLogout = () => {
@@ -116,7 +122,6 @@ export default function AdminCreatePage() {
     }
     setAccountType(type)
     setUserId("")
-    setPermissions([])
     setGeneratedAccount(null)
     setCreateError("")
   }
@@ -227,53 +232,70 @@ export default function AdminCreatePage() {
             <Card>
               <CardHeader>
                 <CardTitle>사용자 정보 설정</CardTitle>
-                <CardDescription>ID와 부여할 권한을 설정하세요</CardDescription>
+                <CardDescription>사용자 이름과 템플릿을 선택하세요</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
-                  <Label htmlFor="userId">사용자 ID (10자 이내)</Label>
+                  <label htmlFor="userId" className="text-sm font-medium">
+                    사용자 이름
+                  </label>
                   <Input
                     id="userId"
-                    placeholder="사용자 ID 입력"
+                    placeholder="사용자 이름 입력 (예: 테스트학생1)"
                     value={userId}
-                    onChange={(e) => setUserId(e.target.value.slice(0, 10))}
-                    maxLength={10}
+                    onChange={(e) => setUserId(e.target.value)}
                     disabled={isCreating}
                   />
-                  <p className="text-xs text-muted-foreground">{userId.length}/10</p>
                 </div>
 
-                <div className="space-y-3">
-                  <Label>권한 선택</Label>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="read"
-                        checked={permissions.includes("read")}
-                        onCheckedChange={() => togglePermission("read")}
-                        disabled={isCreating}
-                      />
-                      <label htmlFor="read" className="text-sm font-medium cursor-pointer">
-                        읽기 (Read)
-                      </label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="write"
-                        checked={permissions.includes("write")}
-                        onCheckedChange={() => togglePermission("write")}
-                        disabled={isCreating}
-                      />
-                      <label htmlFor="write" className="text-sm font-medium cursor-pointer">
-                        쓰기 (Write)
-                      </label>
-                    </div>
-                  </div>
+                <div className="space-y-2">
+                  <label htmlFor="template" className="text-sm font-medium">
+                    개발 환경 템플릿
+                  </label>
+                  <select
+                    id="template"
+                    value={selectedTemplate}
+                    onChange={(e) => setSelectedTemplate(Number(e.target.value))}
+                    disabled={isCreating}
+                    className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value={1}>Node.js 개발 환경</option>
+                    <option value={2}>Python ML 환경</option>
+                    <option value={3}>Bash 간단 환경</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    선택한 템플릿으로 개발 환경이 자동 생성됩니다
+                  </p>
                 </div>
 
                 <Button className="w-full" size="lg" onClick={handleCreateUserAccount} disabled={isCreating}>
-                  {isCreating ? "생성 중..." : "계정 생성하기"}
+                  {isCreating ? "생성 중..." : "사용자 계정 + 환경 생성하기"}
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {showLogs && logs.length > 0 && (
+            <Card className="border-blue-500">
+              <CardHeader>
+                <CardTitle className="text-blue-600">실시간 생성 로그</CardTitle>
+                <CardDescription>환경 생성 과정을 실시간으로 확인하세요</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-black/90 text-green-400 p-4 rounded-lg font-mono text-sm max-h-96 overflow-y-auto space-y-1">
+                  {logs.map((log, index) => (
+                    <div key={index} className="flex items-start gap-2">
+                      <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span>
+                      <span>{log}</span>
+                    </div>
+                  ))}
+                  {isCreating && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-gray-400">처리 중...</span>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
@@ -291,22 +313,21 @@ export default function AdminCreatePage() {
                   {generatedAccount.type === "user" && (
                     <div className="space-y-3 mb-4 p-4 bg-secondary/50 rounded-lg">
                       <div>
-                        <p className="text-sm text-muted-foreground mb-1">사용자 ID</p>
+                        <p className="text-sm text-muted-foreground mb-1">사용자 이름</p>
                         <p className="text-lg font-semibold">{generatedAccount.userId}</p>
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-2">부여된 권한</p>
-                        <div className="flex flex-wrap gap-2">
-                          {generatedAccount.permissions?.map((permission) => (
-                            <span
-                              key={permission}
-                              className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-md text-sm font-medium"
-                            >
-                              {permission === "read" ? "읽기" : "쓰기"}
-                            </span>
-                          ))}
+                      {generatedAccount.environmentId && (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-1">개발 환경</p>
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <p className="text-sm font-medium">환경 ID #{generatedAccount.environmentId} 생성 중</p>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            선택한 템플릿으로 Kubernetes 환경이 자동으로 프로비저닝됩니다
+                          </p>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
 
@@ -314,8 +335,12 @@ export default function AdminCreatePage() {
                     <p className="text-sm text-muted-foreground mb-2">생성된 접속 코드</p>
                     <p className="text-3xl font-mono font-bold text-primary tracking-wider">{generatedAccount.code}</p>
                   </div>
-                  <Button className="w-full bg-transparent" variant="outline" onClick={() => router.push("/admin")}>
-                    홈으로 돌아가기
+                  <Button
+                    className="w-full bg-transparent"
+                    variant="outline"
+                    onClick={() => router.push("/admin/monitor")}
+                  >
+                    모니터링으로 가기
                   </Button>
                 </div>
               </CardContent>

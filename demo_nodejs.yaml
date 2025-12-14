@@ -1,0 +1,68 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: demo-nodejs-env
+  namespace: kubdev-users
+spec:
+  userName: "demo-student"
+
+  gitRepository: "https://github.com/vercel/next.js.git"
+  gitRef: "canary"
+
+  image: "codercom/code-server:latest"
+
+  # ⭐ 라이브러리 자동 설치 명령
+  commands:
+    init: |
+      echo "========================================="
+      echo "📦 Node.js 환경 설정 시작..."
+      echo "========================================="
+
+      cd /workspace
+
+      # Node.js 버전 확인
+      echo "✅ Node.js 버전:"
+      node --version
+
+      # npm 버전 확인
+      echo "✅ npm 버전:"
+      npm --version
+
+      # 간단한 package.json 생성 (데모용)
+      echo '{
+        "name": "demo-project",
+        "version": "1.0.0",
+        "description": "KubeDev 데모 프로젝트",
+        "main": "index.js",
+        "scripts": {
+          "start": "node index.js"
+        },
+        "dependencies": {
+          "express": "^4.18.2"
+        }
+      }' > package.json
+
+      # 라이브러리 설치
+      echo "📚 Express.js 설치 중..."
+      npm install
+
+      # 설치 확인
+      echo ""
+      echo "✅ 설치 완료!"
+      echo "-----------------------------------"
+      ls -la node_modules | head -10
+      echo "-----------------------------------"
+      echo ""
+      echo "🎉 환경 설정이 완료되었습니다!"
+      echo "========================================="
+
+    start: ""
+
+  # 포트 설정
+  ports:
+    - 8080 # code-server
+    - 3000 # Express.js 앱
+
+  # 스토리지
+  storage:
+    size: "10Gi"

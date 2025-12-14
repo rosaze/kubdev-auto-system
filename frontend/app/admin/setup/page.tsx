@@ -6,23 +6,31 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { uploadYaml } from "@/lib/api"
-
-const DUMMY_TOOLS = [
-  { name: "VS Code", version: "1.85.0", status: "active" },
-  { name: "nginx", version: "1.24.0", status: "active" },
-  { name: "Python", version: "3.11.5", status: "active" },
-  { name: "Docker", version: "24.0.7", status: "active" },
-  { name: "Git", version: "2.42.0", status: "active" },
-]
+import { Input } from "@/components/ui/input"
+import { createTemplateFromYaml } from "@/lib/api"
 
 export default function AdminSetupPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
+  const [templateName, setTemplateName] = useState("")
   const [environmentFile, setEnvironmentFile] = useState<File | null>(null)
   const [isEnvironmentSet, setIsEnvironmentSet] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadError, setUploadError] = useState("")
+  const [createdTemplate, setCreatedTemplate] = useState<any>(null)
+  const [showRawResponse, setShowRawResponse] = useState(false)
+
+  const renderValue = (value: any) => {
+    if (value === null || value === undefined) return "없음"
+    if (typeof value === "object") {
+      return (
+        <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-muted/40 p-2 rounded border border-border/60">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      )
+    }
+    return String(value)
+  }
 
   useEffect(() => {
     setMounted(true)
@@ -39,32 +47,46 @@ export default function AdminSetupPage() {
     }
   }, [router])
 
-  const handleEnvironmentFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEnvironmentFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0]
       setEnvironmentFile(file)
-      setIsUploading(true)
       setUploadError("")
-
-      const userId = localStorage.getItem("userId")
-      if (!userId) {
-        setUploadError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
-        setIsUploading(false)
-        return
-      }
-
-      const result = await uploadYaml(userId, file)
-
-      if (result.success) {
-        setIsEnvironmentSet(true)
-        localStorage.setItem("environmentSet", "true")
-      } else {
-        setUploadError(result.error || "업로드에 실패했습니다")
-        setEnvironmentFile(null)
-      }
-
-      setIsUploading(false)
     }
+  }
+
+  const handleCreateTemplate = async () => {
+    if (!templateName.trim()) {
+      setUploadError("템플릿 이름을 입력해주세요.")
+      return
+    }
+
+    if (!environmentFile) {
+      setUploadError("YAML 파일을 선택해주세요.")
+      return
+    }
+
+    setIsUploading(true)
+    setUploadError("")
+
+    const userId = localStorage.getItem("userId")
+    if (!userId) {
+      setUploadError("사용자 정보를 찾을 수 없습니다. 다시 로그인해주세요.")
+      setIsUploading(false)
+      return
+    }
+
+    const result = await createTemplateFromYaml(templateName, environmentFile, userId)
+
+    if (result.success) {
+      setIsEnvironmentSet(true)
+      setCreatedTemplate(result.data)
+      localStorage.setItem("environmentSet", "true")
+    } else {
+      setUploadError(result.error || "템플릿 생성에 실패했습니다")
+    }
+
+    setIsUploading(false)
   }
 
   const handleLogout = () => {
@@ -105,6 +127,20 @@ export default function AdminSetupPage() {
               <CardDescription>사용자 계정 생성을 위한 환경을 설정합니다</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="template-name" className="text-sm font-medium">
+                  템플릿 이름
+                </label>
+                <Input
+                  id="template-name"
+                  type="text"
+                  placeholder="예: Python 개발 환경"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  disabled={isUploading}
+                />
+              </div>
+
               <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors">
                 <input
                   type="file"
@@ -114,7 +150,7 @@ export default function AdminSetupPage() {
                   id="environment-file-upload"
                   disabled={isUploading}
                 />
-                <label htmlFor="environment-file-upload" className={isUploading ? "cursor-wait" : "cursor-pointer"}>
+                <label htmlFor="environment-file-upload" className={isUploading ? "cursor-not-allowed" : "cursor-pointer"}>
                   <div className="flex flex-col items-center gap-2">
                     <svg
                       className="w-12 h-12 text-muted-foreground"
@@ -130,12 +166,22 @@ export default function AdminSetupPage() {
                       />
                     </svg>
                     <div>
-                      <p className="font-medium">{isUploading ? "업로드 중..." : "클릭하여 YAML 파일 선택"}</p>
+                      <p className="font-medium">클릭하여 YAML 파일 선택</p>
                       <p className="text-sm text-muted-foreground">.yaml 또는 .yml 파일</p>
                     </div>
                   </div>
                 </label>
               </div>
+
+              {environmentFile && (
+                <Button
+                  onClick={handleCreateTemplate}
+                  disabled={isUploading}
+                  className="w-full"
+                >
+                  {isUploading ? "템플릿 생성 중..." : "템플릿 생성"}
+                </Button>
+              )}
 
               {uploadError && (
                 <div className="flex items-center gap-2 p-3 bg-destructive/10 text-destructive rounded-lg">
@@ -150,10 +196,10 @@ export default function AdminSetupPage() {
                 </div>
               )}
 
-              {environmentFile && !uploadError && (
+              {environmentFile && (
                 <div className="flex items-center gap-2 p-3 bg-secondary rounded-lg">
                   <svg
-                    className="w-5 h-5 text-primary"
+                    className="w-5 h-5 text-muted-foreground"
                     fill="none"
                     strokeWidth="2"
                     stroke="currentColor"
@@ -162,45 +208,84 @@ export default function AdminSetupPage() {
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
                     />
                   </svg>
                   <span className="font-medium">{environmentFile.name}</span>
-                  <span className="ml-auto text-xs text-muted-foreground">환경 설정 완료</span>
+                  <span className="ml-auto text-xs text-muted-foreground">선택됨</span>
                 </div>
               )}
 
-              {isEnvironmentSet && (
+              {createdTemplate && (
                 <div className="space-y-3 mt-4 pt-4 border-t">
-                  <h3 className="font-semibold text-sm">설치될 도구 목록</h3>
-                  {DUMMY_TOOLS.map((tool, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
-                          <svg
-                            className="w-4 h-4 text-primary"
-                            fill="none"
-                            strokeWidth="2"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"
-                            />
-                          </svg>
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{tool.name}</p>
-                          <p className="text-xs text-muted-foreground">v{tool.version}</p>
-                        </div>
-                      </div>
-                      <span className="text-xs font-medium text-accent bg-accent/10 px-2 py-1 rounded-full">
-                        {tool.status}
+                  <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 rounded-lg">
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      strokeWidth="2"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span className="font-medium">템플릿이 성공적으로 생성되었습니다!</span>
+                  </div>
+
+                  <h3 className="font-semibold text-sm">생성된 템플릿 정보</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
+                      <span className="text-sm text-muted-foreground">템플릿 ID</span>
+                      <span className="font-medium">{createdTemplate.id}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
+                      <span className="text-sm text-muted-foreground">이름</span>
+                      <span className="font-medium">{createdTemplate.name}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
+                      <span className="text-sm text-muted-foreground">상태</span>
+                      <span className="text-xs font-medium text-green-600 bg-green-100 dark:bg-green-950 dark:text-green-300 px-2 py-1 rounded-full">
+                        {createdTemplate.status}
                       </span>
                     </div>
-                  ))}
+                    <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
+                      <span className="text-sm text-muted-foreground">Docker 이미지</span>
+                      <span className="font-mono text-xs">{createdTemplate.base_image}</span>
+                    </div>
+                    {createdTemplate.default_git_repo && (
+                      <div className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
+                        <span className="text-sm text-muted-foreground">Git 저장소</span>
+                        <span className="font-mono text-xs truncate max-w-[200px]">{createdTemplate.default_git_repo}</span>
+                      </div>
+                    )}
+                    {Object.entries(createdTemplate)
+                      .filter(([key]) => !["id", "name", "status", "base_image", "default_git_repo"].includes(key))
+                      .map(([key, value]) => (
+                        <div key={key} className="space-y-1 p-3 bg-secondary/50 rounded-lg">
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-sm text-muted-foreground">{key}</span>
+                            {typeof value !== "object" && (
+                              <span className="font-mono text-xs max-w-[200px] truncate text-right">{String(value)}</span>
+                            )}
+                          </div>
+                          {typeof value === "object" && renderValue(value)}
+                        </div>
+                      ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Button variant="outline" className="w-full" onClick={() => setShowRawResponse((prev) => !prev)}>
+                      {showRawResponse ? "응답 전문 숨기기" : "응답 전문 보기"}
+                    </Button>
+                    {showRawResponse && (
+                      <pre className="bg-secondary/60 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap break-words border border-border/80 max-h-96 overflow-auto">
+                        {JSON.stringify(createdTemplate, null, 2)}
+                      </pre>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>

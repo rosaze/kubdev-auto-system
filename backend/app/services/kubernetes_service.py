@@ -479,3 +479,37 @@ class KubernetesService:
         except Exception as e:
             log.error("An unexpected error occurred while getting custom object", name=name, error=str(e), exc_info=True)
             raise e
+
+    async def get_nodeport_url(self, service_name: str, namespace: str) -> str:
+        """Get service URL for both NodePort and ClusterIP services (with port-forwarding)"""
+        self._check_k8s_availability()
+        try:
+            # Get service to extract port information
+            service = self.v1.read_namespaced_service(service_name, namespace)
+
+            # Get first port
+            if not service.spec.ports or len(service.spec.ports) == 0:
+                log.warning("Service has no ports", service=service_name, namespace=namespace)
+                return None
+
+            # Handle based on service type
+            if service.spec.type == "NodePort":
+                # For NodePort, use the NodePort number
+                node_port = service.spec.ports[0].node_port
+                url = f"http://localhost:{node_port}"
+                log.info("Generated NodePort URL", service=service_name, namespace=namespace, url=url, node_port=node_port)
+                return url
+            else:
+                # For ClusterIP services, we can't generate a reliable URL without knowing
+                # which port is being forwarded. Return a message indicating manual port-forward is needed.
+                log.info("ClusterIP service found - port-forward required", service=service_name, namespace=namespace, service_type=service.spec.type)
+                # Return kubectl port-forward command as placeholder
+                service_port = service.spec.ports[0].port
+                return f"kubectl port-forward -n {namespace} svc/{service_name} 8080:{service_port}"
+
+        except ApiException as e:
+            log.warning("Failed to get service URL", service=service_name, namespace=namespace, error=str(e))
+            return None
+        except Exception as e:
+            log.warning("Unexpected error getting service URL", service=service_name, namespace=namespace, error=str(e))
+            return None

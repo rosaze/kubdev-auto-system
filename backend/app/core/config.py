@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # CORS 설정
-    ALLOWED_HOSTS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    ALLOWED_HOSTS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"]
 
     # 데이터베이스 설정
     DATABASE_URL: str = "postgresql://kubdev:password@localhost:5432/kubdev"
@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     PROMETHEUS_ENABLED: bool = True
     PROMETHEUS_PORT: int = 8001
     METRICS_COLLECTION_INTERVAL: int = 60  # seconds
+    SLACK_WEBHOOK_URL: Optional[str] = None
 
     # 로깅 설정
     LOG_LEVEL: str = "INFO"

@@ -1,0 +1,96 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kubedevenvironments.kubedev.my-project.com
+spec:
+  group: kubedev.my-project.com
+  names:
+    kind: KubeDevEnvironment
+    plural: kubedevenvironments
+    singular: kubedevenvironment
+    shortNames:
+      - kubdev
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - userName
+              properties:
+                userName:
+                  type: string
+                  description: "사용자 이름"
+
+                templateId:
+                  type: string
+                  description: "템플릿 ID"
+
+                gitRepository:
+                  type: string
+                  description: "Git 레포지토리 URL"
+
+                git:
+                  type: object
+                  properties:
+                    repoUrl:
+                      type: string
+                    ref:
+                      type: string
+                  description: "Git 설정"
+
+                image:
+                  type: string
+                  description: "Docker 이미지"
+                  default: "codercom/code-server:latest"
+
+                commands:
+                  type: object
+                  properties:
+                    init:
+                      type: string
+                      description: "초기화 명령 (라이브러리 설치 등)"
+                    start:
+                      type: string
+                      description: "시작 명령 (앱 실행 등)"
+                  description: "실행 명령"
+
+                ports:
+                  type: array
+                  items:
+                    type: integer
+                  description: "노출할 포트 목록"
+
+                storage:
+                  type: object
+                  properties:
+                    size:
+                      type: string
+                      default: "20Gi"
+                  description: "스토리지 설정"
+
+                template:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: "Deployment 템플릿 (호환성 유지)"
+
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                phase:
+                  type: string
+                namespace:
+                  type: string
+                workspaceId:
+                  type: string
+                ideUrl:
+                  type: string
+      subresources:
+        status: {}

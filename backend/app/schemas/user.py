@@ -88,3 +88,18 @@ class UserLoginResponse(BaseModel):
 class UserLogout(BaseModel):
     """로그아웃 요청 스키마"""
     user_id: int = Field(..., description="로그아웃할 사용자 ID")
+
+
+class UserCreateWithEnvironment(BaseModel):
+    """사용자 생성 + 환경 자동 생성 요청 스키마"""
+    name: str = Field(..., min_length=1, max_length=255, description="사용자 이름")
+    template_id: int = Field(..., description="사용할 템플릿 ID")
+
+
+class UserCreateWithEnvironmentResponse(BaseModel):
+    """사용자 생성 + 환경 자동 생성 응답 스키마"""
+    user_id: int
+    access_code: str
+    environment_id: int
+    environment_status: str
+    message: str = "사용자 계정과 개발 환경이 생성되었습니다."
