@@ -26,6 +26,47 @@ class EnvironmentService:
         self.k8s_service = KubernetesService()
         self.log = logger or structlog.get_logger(__name__)
 
+    async def refresh_environment_metrics(self) -> None:
+        """모든 환경의 리소스 메트릭을 수집해 DB에 저장"""
+        environments = self.db.query(EnvironmentInstance).all()
+
+        for env in environments:
+            try:
+                # 네임스페이스의 Pod 메트릭 조회 (metrics-server 필요)
+                pod_metrics = await self.k8s_service.get_pod_metrics_for_namespace(env.k8s_namespace)
+
+                cpu_total = 0
+                mem_total = 0.0
+                pods = []
+
+                for pod_name, usage in pod_metrics.items():
+                    cpu = usage.get("cpu_millicores") or 0
+                    mem = usage.get("memory_mb") or 0.0
+                    cpu_total += cpu
+                    mem_total += mem
+                    pods.append({
+                        "name": pod_name,
+                        "cpu_millicores": cpu,
+                        "memory_mb": mem
+                    })
+
+                env.current_resource_usage = {
+                    "pods": pods,
+                    "cpu_millicores_total": cpu_total,
+                    "memory_mb_total": round(mem_total, 2),
+                    "refreshed_at": datetime.utcnow().isoformat(),
+                }
+            except Exception as e:
+                # 개별 환경 실패는 기록만 하고 다음으로 넘어감
+                self.log.warning(
+                    "Failed to refresh metrics",
+                    env_id=env.id,
+                    namespace=env.k8s_namespace,
+                    error=str(e),
+                )
+
+        self.db.commit()
+
     async def deploy_environment(self, environment_id: int) -> Dict[str, Any]:
         """환경을 K8s 클러스터에 배포"""
         log = self.log.bind(environment_id=environment_id)

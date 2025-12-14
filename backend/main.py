@@ -4,6 +4,7 @@ import sys
 import uvicorn
 import logging
 import traceback
+import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +44,7 @@ except Exception as e:
 
 try:
     logger.info("Importing database modules...")
-    from app.core.database import check_database_connection, create_all_tables
+    from app.core.database import check_database_connection, create_all_tables, SessionLocal
     logger.info("Database modules imported successfully")
 except Exception as e:
     logger.error(f"Failed to import database modules: {e}")
@@ -58,6 +59,10 @@ except Exception as e:
     logger.error(f"Failed to import API router: {e}")
     logger.error(f"Traceback:\n{traceback.format_exc()}")
     raise
+
+# 환경 서비스는 초기화 시점에 DB 세션이 필요하므로 지연 임포트 대신 전역에서 로드
+from sqlalchemy.orm import Session
+from app.services.environment_service import EnvironmentService
 
 # 데이터베이스 테이블 생성 (개발 환경)
 try:
@@ -165,4 +170,26 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
     uvicorn.run(app, host=host, port=port)
+
+
+async def metrics_refresher_loop(interval_seconds: int = 30):
+    """주기적으로 모든 환경의 메트릭을 수집하여 DB에 저장"""
+    while True:
+        try:
+            db: Session = SessionLocal()
+            service = EnvironmentService(db)
+            await service.refresh_environment_metrics()
+        except Exception as e:
+            logger.error("Metrics refresher loop error", error=str(e))
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+        await asyncio.sleep(interval_seconds)
+
+
+@app.on_event("startup")
+async def start_background_tasks():
+    asyncio.create_task(metrics_refresher_loop(interval_seconds=30))
 

@@ -91,6 +91,31 @@ async def get_environment_metrics(
         raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
 
 
+@router.get("/environments/{environment_id}/metrics/current")
+async def get_environment_metrics_current(
+    environment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """DB에 저장된 최신 메트릭 스냅샷 반환"""
+    environment = db.query(EnvironmentInstance).filter(
+        EnvironmentInstance.id == environment_id
+    ).first()
+
+    if not environment:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    if environment.user_id != current_user.id and current_user.role.value not in ["org_admin", "super_admin"]:
+        raise HTTPException(status_code=403, detail="No permission to access this environment")
+
+    return {
+        "environment_id": environment_id,
+        "name": environment.name,
+        "current_usage": environment.current_resource_usage,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/stream/pods")
 async def stream_managed_pods(request: Request):
     """Managed pod snapshot stream (SSE)"""
