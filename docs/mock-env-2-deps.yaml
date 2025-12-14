@@ -1,0 +1,73 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: demo-env-with-deps
+  namespace: kubdev-users
+spec:
+  userName: "demo-user-deps"
+  gitRepository: "https://github.com/facebook/create-react-app.git"
+  gitRef: "main"
+  template:
+    apiVersion: apps/v1
+    kind: Deployment
+    spec:
+      replicas: 1
+      template:
+        spec:
+          initContainers:
+            # Git clone
+            - name: git-clone
+              image: alpine/git
+              args:
+                - clone
+                - --single-branch
+                - --branch
+                - main
+                - --depth
+                - "1"
+                - "https://github.com/facebook/create-react-app.git"
+                - /workspace
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+            # 의존성 설치
+            - name: install-deps
+              image: node:18-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  cd /workspace
+                  npm install
+                  echo "✅ Dependencies installed successfully"
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+          containers:
+            - name: vscode
+              image: codercom/code-server:latest
+              args:
+                - "--auth"
+                - "none"
+                - "--bind-addr"
+                - "0.0.0.0:8080"
+                - "/workspace"
+              ports:
+                - containerPort: 8080
+                  name: http
+              volumeMounts:
+                - name: workspace-storage
+                  mountPath: /workspace
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "2000m"
+                  memory: "4Gi"
+              env:
+                - name: NODE_ENV
+                  value: "development"
+          volumes:
+            - name: workspace-storage
+              emptyDir: {}

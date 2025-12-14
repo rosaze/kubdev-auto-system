@@ -1,0 +1,30 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: django-study-env
+  namespace: kubdev-users
+spec:
+  userName: django-student
+  gitRepository: https://github.com/APPS-sookmyung/2025-2-Django-study.git
+  gitRef: main
+  image: codercom/code-server:latest
+
+  # Git clone 후 실행할 명령어들
+  postStartCommands:
+    - "cd /workspace && python3 -m pip install --upgrade pip"
+    - "cd /workspace && if [ -f requirements.txt ]; then pip install -r requirements.txt; fi"
+    - "echo 'Dependencies installed successfully!'"
+
+  # 환경 변수 설정
+  env:
+    - name: PYTHONUNBUFFERED
+      value: "1"
+    - name: DJANGO_SETTINGS_MODULE
+      value: "config.settings"
+
+  # 리소스 제한
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+      storage: "20Gi"

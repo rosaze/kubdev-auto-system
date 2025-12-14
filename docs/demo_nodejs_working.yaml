@@ -1,0 +1,69 @@
+apiVersion: kubedev.my-project.com/v1alpha1
+kind: KubeDevEnvironment
+metadata:
+  name: demo-nodejs-working
+  namespace: kubdev-users
+spec:
+  userName: "demo-student"
+  gitRepository: "https://github.com/nodejs/nodejs.org.git"
+  gitRef: "main"
+
+  # Node.js 포함된 이미지 사용!
+  image: "node:20-bookworm"
+  
+  commands:
+    init: |
+      echo "================================"
+      echo "Node.js 환경 설정 시작..."
+      echo "================================"
+      
+      cd /workspace
+      
+      # Node.js 버전 확인
+      echo "✅ Node.js: $(node --version)"
+      echo "✅ npm: $(npm --version)"
+      
+      # 간단한 프로젝트 생성
+      cat > package.json << 'PKGJSON'
+      {
+        "name": "kubedev-demo",
+        "version": "1.0.0",
+        "scripts": {
+          "start": "node server.js"
+        },
+        "dependencies": {
+          "express": "^4.18.2"
+        }
+      }
+      PKGJSON
+      
+      # Express.js 설치
+      echo "📦 Express 설치 중..."
+      npm install
+      
+      # 간단한 서버 생성
+      cat > server.js << 'SERVERJS'
+      const express = require('express');
+      const app = express();
+
+      app.get('/', (req, res) => {
+        res.send('<h1>Hello from KubeDev!</h1>');
+      });
+
+      app.listen(3000, () => {
+        console.log('Server running on port 3000');
+      });
+      SERVERJS
+      
+      echo ""
+      echo "✅ 환경 설정 완료!"
+      echo "================================"
+    
+    start: ""
+  
+  ports:
+    - 8080  # code-server
+    - 3000  # Express app
+
+  storage:
+    size: "5Gi"
